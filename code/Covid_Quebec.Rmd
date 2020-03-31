@@ -1,0 +1,242 @@
+---
+title: "Covid in Quebec"
+author:
+- name: Luke Anderson-Trocmé,
+  affiliation:
+  - &cruk Department of Human Genetics, McGill University,  Montreal, Canada
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output:
+  html_notebook:
+    df_print: paged
+    code_folding: show
+    toc: yes
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+# Load Libraries and set paths
+```{r setup}
+library(ggplot2) # plotting functions
+library(ggrepel) # repel label text
+library(dplyr) # data wrangling
+library(tidyverse)
+library(stringr) #for removing spaces
+
+#Set Path
+covidPath <- '~/Documents/covid19/data/quebec/'
+covidFigPath <- '~/Documents/covid19/figures/'
+
+today <- format(Sys.Date(), "%Y-%B-%d")
+
+#BATCH LOAD files
+batchLoad <- function(data_path, pattern, header) {
+fn <-
+  list.files(path = data_path,
+             pattern = pattern,
+             full.names = T)
+#load data
+df <- lapply(fn,
+              read.csv,
+              header = header)
+
+#set names
+names(df) <- basename(fn)
+
+##Combine files
+total <- data.frame()
+for(b in names(df)){
+  f <- df[[b]]
+  f$name <- b
+  total <- rbind(total, f)
+}
+
+return(total) 
+}
+```
+# Load Data
+```{r, warning = F, message = F}
+# Province name abbreviations
+qc_abbreviations <- 
+  read.csv(paste0(covidPath, "qc_abr.csv")) %>%
+  mutate(code = as.character(code))
+
+# Corona virus data is downloaded from : 
+# https://www.quebec.ca/en/health/health-issues/a-z/2019-coronavirus/situation-coronavirus-in-quebec/
+
+# Load data
+covid_qc <- batchLoad(covidPath, "march", F)
+covid_qc <-
+  as.data.frame(apply(covid_qc,2,function(x)gsub('\\s+', '',x))) %>%
+  separate( . , V1, c("code", "region"), "-") %>%
+  mutate(code = as.character(code),
+         cases = as.numeric(as.character(V2)),
+         name = gsub("march|.csv","", name),
+         date = as.Date(paste0("2019-3-",name))) %>%
+  left_join( . , # merge table to get abbreviations
+             qc_abbreviations,
+             by = "code") %>%
+  dplyr::select(code, qc_abr, cases, date) %>%
+  arrange(desc(date),-cases)
+
+# Get most recent data for labelling
+covid_qc_labels <- top_n(x = covid_qc, n = 1, w = date)
+```
+
+# Growth rate calculation
+```{r}
+#Growth rate = (Present value - Past value)/ Past Value * 100
+#SOMETHING WRONG WITH DOUBLING TIME ESTIMATE
+rate <-
+  covid %>%
+  dplyr::select(prabb,date,numconf) %>%
+  arrange(date) %>%
+  group_by(prabb) %>%
+  mutate(time_diff = date - lag(date),  # just in case there are gaps in data
+         case_diff = numconf - lag(numconf), # count diff in cases between dates
+         rate_percent = (case_diff / as.numeric(time_diff)) / lag(numconf) * 100) %>%# growth rate
+  group_by(prabb) %>%
+  filter(rate_percent < Inf) %>% # remove infinity from mean rate
+  dplyr::summarise(double_time = log(2) / mean(rate_percent, na.rm = TRUE))
+
+rate
+```
+
+```{r}
+covid_qc <- 
+  left_join(covid_qc,
+            covid_qc_labels %>% dplyr::select(qc_abr, cases),
+            by = "qc_abr")
+
+#get time range for plotting
+start_qc <- min(covid_qc$date)
+end_qc <- max(covid_qc$date)
+#header of the data
+covid_qc
+```
+
+# Make Plot
+```{r, warning=F}
+ggplot()+
+  geom_path(data = covid_qc %>%
+              filter(qc_abr != "QC"),
+            aes(x = date, 
+                y = cases.x, 
+                color = cases.y,
+                group = qc_abr),
+            size = 1.5) +
+  geom_path(data = covid_qc %>%
+              filter(qc_abr == "QC"),
+            aes(x = date, 
+                y = cases.x, 
+                group = qc_abr),
+            color = "black",
+            linetype = 2) +
+  geom_text_repel(data = covid_qc_labels,
+                  aes(x = date, 
+                      y = cases,
+                      label = qc_abr),
+                  color = "black",
+                  segment.alpha = 0.2,
+                  direction = "y",
+                  nudge_x = end + 2,
+                  hjust = 1) +
+  xlim(c(start_qc, end_qc + 2)) +
+  scale_y_log10() + 
+  annotation_logticks(sides = "l") +
+  scale_colour_distiller(name = "confirmed cases",
+                         palette = "PuOr",
+                         trans = "log",
+                         breaks = c(1,10,100,1000)) +
+  theme_bw() +
+  ylab("number of confirmed cases") +
+  ggtitle("Covid-19 cases in Quebec") +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = 15))
+
+ggsave(paste0(covidFigPath,"Quebec_Covid_",today,".jpg"), height = 5, width = 8)
+```
+
+# Make Plot
+```{r, warning=F}
+ggplot()+
+  geom_path(data = covid %>%
+              filter(prabb != "CAN",
+                     numdeaths.x > 0),
+            aes(x = date, 
+                y = numdeaths.x, 
+                color = numdeaths.y / numtotal * 100,
+                group = prabb),
+            size = 1.5) +
+  geom_path(data = covid %>%
+              filter(prabb == "CAN"),
+            aes(x = date, 
+                y = numdeaths.x, 
+                group = prabb),
+            color = "black",
+            linetype = 2) +
+  geom_text_repel(data = covid_labels %>%
+              filter(numdeaths > 0),
+                  aes(x = date, 
+                      y = numdeaths,
+                      label = prabb),
+                  color = "black",
+                  segment.alpha = 0.2,
+                  direction = "y",
+                  nudge_x = end + 5,
+                  hjust = 1) +
+  xlim(c(first_death - 5, end + 5)) +
+  scale_y_log10() + 
+  annotation_logticks(sides = "l") +
+  scale_colour_distiller(name = "% deaths per case",
+                         palette = "PuOr") +
+  theme_bw() +
+  ylab("number of deaths") +
+  ggtitle("Covid-19 cases in Canada") +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = 15))
+
+ggsave(paste0(covidFigPath,"Canada_Covid_",today,"_death.jpg"), height = 5, width = 8)
+```
+
+
+# Make rate plot
+```{r, warning=F}
+#SOMETHING WRONG WITH DOUBLING TIME ESTIMATE
+ggplot()+
+  geom_path(data = covid %>%
+              filter(prabb != "CAN"),
+            aes(x = date, 
+                y = numconf, 
+                color = double_time,
+                group = prabb),
+            size = 1.5) +
+  geom_line(data = covid %>%
+              filter(prabb == "CAN"),
+            aes(x = date, 
+                y = numconf, 
+                group = prabb),
+            color = "black",
+            linetype = 2) +
+  geom_text_repel(data = covid_labels,
+                  aes(x = date, 
+                      y = numconf,
+                      label = prabb),
+                  color = "black",
+                  segment.alpha = 0.2,
+                  direction = "y",
+                  nudge_x = end + 5,
+                  hjust = 1) +
+  xlim(c(start, end + 5)) +
+  scale_y_log10() + 
+  annotation_logticks(sides = "l") +
+  scale_colour_distiller(name = "doubling time",
+                         palette = "PuOr") +
+  theme_bw() +
+  ylab("number of confirmed cases") +
+  ggtitle("Covid-19 cases in Canada") +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = 15))
+```
