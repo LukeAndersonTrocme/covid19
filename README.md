@@ -2,6 +2,8 @@
 Here are a few scripts I wrote to generate statistical graphics from publicly available data about the novel Coronavirus.
 
 
+![Covid19 in Canada](https://github.com/LukeAndersonTrocme/covid19/blob/master/figures/Canada_Covid_2020-March-31.jpg?raw=true)
+
 # Data Resources : 
 
 ## Canada : 
