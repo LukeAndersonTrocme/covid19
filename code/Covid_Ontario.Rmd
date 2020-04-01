@@ -1,0 +1,166 @@
+---
+title: "Covid in Ontario"
+author:
+- name: Luke Anderson-Trocmé,
+  affiliation:
+  - &cruk Department of Human Genetics, McGill University,  Montreal, Canada
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output:
+  html_notebook:
+    df_print: paged
+    code_folding: show
+    toc: yes
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+# Load Libraries and set paths
+```{r setup}
+library(ggplot2) # plotting functions
+library(ggrepel) # repel label text
+library(dplyr) # data wrangling
+library(tidyverse)
+library(stringr) #for removing spaces
+
+#Set Path
+covidPath <- '~/Documents/covid19/data/ontario/'
+covidFigPath <- '~/Documents/covid19/figures/'
+
+today <- format(Sys.Date(), "%Y-%B-%d")
+```
+# Load Data
+```{r, warning = F, message = F}
+
+# Corona virus data is downloaded from : 
+data_url <- "https://data.ontario.ca/dataset/f4112442-bdc8-45d2-be3c-12efae72fb27/resource/455fd63b-603d-4608-8216-7d8647f43350/download/conposcovidloc.csv"
+
+# Download data
+download.file(data_url, destfile = paste0(covidPath, "conposcovidloc.csv"), quiet = T)
+
+
+#Location Maps
+#get Canadian borders
+canada <- raster::getData(name = "GADM",
+                          country = "CAN",
+                          level = 1)
+#get Quebec borders
+ON <- canada[canada$NAME_1 %in% "Ontario",]
+
+# Load data
+covid_on <- 
+  read.csv(paste0(covidPath, "conposcovidloc.csv")) %>%
+  mutate(ACCURATE_EPISODE_DATE = as.Date(ACCURATE_EPISODE_DATE),
+         OUTCOME1 = factor(OUTCOME1, levels(OUTCOME1)[c(1,4,5,3,6,2)]))
+
+#get time range for plotting
+start_on <- min(covid_on$ACCURATE_EPISODE_DATE)
+end_on <- max(covid_on$ACCURATE_EPISODE_DATE)
+#header of the data
+covid_on
+
+#group by city
+loc_covid_on <-
+  covid_on %>%
+  group_by(Reporting_PHU_Latitude, Reporting_PHU_Longitude,Reporting_PHU_City) %>%
+  dplyr::summarise(count = n()) %>%
+  arrange(-count, Reporting_PHU_City)
+```
+
+```{r}
+#new map limits
+Lat1 <- min(covid_on$Reporting_PHU_Latitude, na.rm = T) - 0.2
+Lat2 <- max(covid_on$Reporting_PHU_Latitude, na.rm = T) + 0.2
+Lon1 <- min(covid_on$Reporting_PHU_Longitude, na.rm = T) - 0.2
+Lon2 <- max(covid_on$Reporting_PHU_Longitude, na.rm = T) + 0.2
+#crop
+new.ext.on <- raster::extent(c(Lon1,Lon2,Lat1,Lat2))
+ON <- raster::crop(ON, new.ext.on)
+
+set.seed(101)
+
+ggplot(ON,aes(x=long,y=lat)) +
+  geom_path(aes(group = group),
+            color = 'grey70') +
+  coord_map() +
+  geom_text_repel(data = loc_covid_on,
+                  aes(x=Reporting_PHU_Longitude,
+                      y=Reporting_PHU_Latitude,
+                      label = Reporting_PHU_City),
+                  size = 2,
+                  segment.size = 0) +
+  geom_point(data = loc_covid_on,
+             aes(x=Reporting_PHU_Longitude,
+                      y=Reporting_PHU_Latitude ,
+                 size = count,
+                 color = count),
+             alpha = 0.3) +
+  geom_point(data = loc_covid_on,
+             aes(x=Reporting_PHU_Longitude,
+                      y=Reporting_PHU_Latitude,
+                 size = count,
+                 color = count),
+             shape = 1) +
+  scale_size_area(breaks = c(10,100,400),
+                  max_size = 15,
+                  name = "Count") +
+  scale_color_distiller(palette = "YlOrRd",
+                        trans = "log10",
+                        guide = FALSE) +
+  labs(title = paste0("Covid Cases in Ontario (",today,")")) +
+  theme(axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.line = element_blank())
+
+
+ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_map.jpg"), height = 10, width = 15)
+```
+
+```{r}
+ggplot(covid_on%>%
+  filter(Age_Group != "Unknown"),
+       aes(x = ACCURATE_EPISODE_DATE,
+           fill = Age_Group)) +
+  geom_histogram(binwidth = 1) +
+  scale_fill_brewer(palette = "RdYlGn",
+                    type = "seq",
+                    direction = -1,
+                    name = "Age Group") +
+  labs(x = "Date",
+       y = "Number of Cases",
+       title = paste0("Age Distribution of COVID-19 Cases in Ontario \n(",today,")")) 
+
+ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_age_bin.jpg"), height = 7, width = 10)
+```
+
+```{r}
+ggplot(covid_on,
+       aes(x = ACCURATE_EPISODE_DATE,
+           fill = CASE_ACQUISITIONINFO)) +
+  geom_histogram(binwidth = 1) +
+  scale_fill_brewer(name = "Case Info") +
+  labs(x = "Date",
+       y = "Number of Cases",
+       title = paste0("Case Information of COVID-19 Cases in Ontario \n(",today,")"))
+
+ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_case_info.jpg"), height = 7, width = 10)
+```
+
+```{r}
+ggplot(covid_on %>%
+  filter(Age_Group != "Unknown",
+         OUTCOME1 != 'RES. EFFECTS',
+         OUTCOME1 != ''),
+       aes(x = OUTCOME1,
+           y = Age_Group)) +
+  geom_bin2d() +
+  scale_fill_gradient(low = "white",
+                       high = "black",
+                      trans = "log10")+
+  labs(x = "Outcome",
+       y = "Age Group",
+       title = paste0("Age Distribution of COVID-19 Outcomes in Ontario \n(",today,")"))
+
+ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_outcome.jpg"), height = 7, width = 10)
+```
+

@@ -1,0 +1,19 @@
+code,qc_abr,city_name,Lat,Lon
+01,BSL,Rimouski,48.45,-68.53
+02,SLSJ,Saguenay,48.416667,-71.066667
+03,CAPN,Quebec City,46.813889,-71.208056
+04,MAUR,Trois-Riviere,46.35,-72.55
+05,ESTR,Sherbooke,45.4,-71.9
+06,MTL,Montreal,45.508889,-73.561667
+07,OUT,Gatineau,45.483333,-75.65
+08,ABT,Rouyn-Noranda,48.233333,-79.016667
+09,CN,Baie-Comeau,49.216667,-68.15
+10,NQC,Matagami,49.75,-77.633333
+11,GIM,Gaspe,48.833333,-64.483333
+12,CHAPP,Montmagny,46.983333,-70.55
+13,LAV,Laval,45.583333,-73.75
+14,LAN,Joliette,46.016667,-73.45
+15,LAUR,Saint-Jerome,45.783333,-74
+16,MGIE,Longeuil,45.383333,-73.1
+17,CQC,Drummondville,45.883333,-72.483333
+Total,QC,,,
