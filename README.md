@@ -9,10 +9,10 @@ Here are a few scripts I wrote to generate statistical graphics from publicly av
 
 # Data Resources : 
 
-## Canada : 
+### Canada : 
 https://health-infobase.canada.ca/src/data/covidLive/covid19.csv
 
-## Quebec : 
+### Quebec : 
 https://www.quebec.ca/en/health/health-issues/a-z/2019-coronavirus/situation-coronavirus-in-quebec/
 
 ## About Me :
