@@ -1,5 +1,5 @@
 # covid19
-Here are a few scripts I wrote to generate statistical graphics from publicly available data about the novel Coronavirus.
+Here are a few scripts I wrote to generate statistical graphics from publicly available data about the novel Coronavirus. Always interested in collaborating on related projects, don't hesitate to contact me!
 
 ![Covid19 in Ontario](https://github.com/LukeAndersonTrocme/covid19/blob/master/figures/Ontario_Covid_April-02-2020_summary.jpg?raw=true)
 
