@@ -16,17 +16,17 @@ output:
 ---
 # Load Libraries and set paths
 ```{r setup}
-library(ggplot2) # plotting functions
-library(ggrepel) # repel label text
-library(dplyr) # data wrangling
-library(tidyverse)
-library(stringr) #for removing spaces
+library(ggplot2)   # plotting functions
+library(ggrepel)   # repel label text
+library(cowplot)   # combine plots
+library(dplyr)     # data wrangling
+library(tidyverse) # data wrangling
 
 #Set Path
 covidPath <- '~/Documents/covid19/data/ontario/'
 covidFigPath <- '~/Documents/covid19/figures/'
 
-today <- format(Sys.Date(), "%Y-%B-%d")
+today <- format(Sys.Date(), "%B-%d-%Y")
 ```
 # Load Data
 ```{r, warning = F, message = F}
@@ -85,17 +85,16 @@ ontario_map <-
   geom_point(data = loc_covid_on,
              aes(x=Reporting_PHU_Longitude,
                  y=Reporting_PHU_Latitude ,
-                 size = count,
-                 color = count),
+                 size = count),
+             color = "red",
              alpha = 0.3) +
   geom_point(data = loc_covid_on %>%
                arrange(count),
              aes(x=Reporting_PHU_Longitude,
                  y=Reporting_PHU_Latitude,
-                 size = count,
-                 color = count),
-             shape = 21,
-             stroke = 1.5) +
+                 size = count),
+             color = "red",
+             shape = 1) +
   geom_text_repel(data = loc_covid_on,
                   aes(x=Reporting_PHU_Longitude,
                       y=Reporting_PHU_Latitude,
@@ -105,16 +104,17 @@ ontario_map <-
   scale_size_area(breaks = c(10,100,400),
                   max_size = 15,
                   name = "Count") +
-  scale_color_distiller(palette = "YlOrRd",
+  scale_color_distiller(palette = "RdYlGn",
+                        direction = -1,
                         trans = "log10",
                         guide = FALSE) +
-  labs(title = paste0("Covid Cases in Ontario (",today,")")) +
+  labs(title = paste0("Cases per city")) +
   theme_classic() + 
   theme(axis.title = element_blank(),
         axis.ticks = element_blank(),
         axis.text = element_blank(),
         axis.line = element_blank(),
-        plot.title = element_text(hjust = 0.5))
+        plot.title = element_text(hjust = 0.5, size = 20))
 
 ontario_map
 
@@ -137,50 +137,78 @@ covid_on_city <-
   left_join( . , covid_on_city, by = c("ACCURATE_EPISODE_DATE","Reporting_PHU_City")) %>%
   arrange(Reporting_PHU_City, ACCURATE_EPISODE_DATE)
 
+covid_on_labels <-
+  covid_on_city %>%
+  dplyr::select(ACCURATE_EPISODE_DATE, Reporting_PHU_City, city_total) %>%
+  unique() %>%
+  group_by(Reporting_PHU_City) %>%
+  top_n(x = . , n = 1, wt = ACCURATE_EPISODE_DATE) %>%
+  ungroup() %>%
+  top_n(x = ., n = 10, wt = city_total)
+
 covid_on_total <-
   covid_on %>%
   group_by(ACCURATE_EPISODE_DATE) %>%
   dplyr::summarise(ontario_total_day = n()) %>%
   mutate(ontario_total = cumsum(ontario_total_day))
 
-ggplot()+
-  geom_path(data = covid_on_city,
+
+city_rate <-
+  covid_on_city %>%
+  dplyr::select(ACCURATE_EPISODE_DATE, Reporting_PHU_City, city_total_cumulative) %>%
+  arrange(ACCURATE_EPISODE_DATE) %>%
+  group_by(Reporting_PHU_City) %>%
+  mutate(time_diff = ACCURATE_EPISODE_DATE - lag(ACCURATE_EPISODE_DATE),  # just in case there are gaps in data
+         case_diff = city_total_cumulative - lag(city_total_cumulative), # count diff in cases between dates
+         rate_percent = (case_diff / as.numeric(time_diff)) / lag(city_total_cumulative) * 100) %>%# growth rate
+  group_by(Reporting_PHU_City) %>%
+  filter(rate_percent < Inf, # remove infinity from mean rate
+         city_total_cumulative >= 10) %>% #min cases
+  dplyr::summarise(double_time = log(2) / mean(rate_percent, na.rm = TRUE)) %>%
+  left_join( . , covid_on_city, by = "Reporting_PHU_City")
+
+
+city_path <-
+  ggplot()+
+  geom_path(data = city_rate,
             aes(x = ACCURATE_EPISODE_DATE,
                 y = city_total_cumulative,
-                color = city_total,
+                color = double_time,
                 group = Reporting_PHU_City),
             size = 1.5) +
-  geom_path(data = covid_on_total,
+  geom_path(data = covid_on_total%>%
+              filter(ontario_total >= 10),
             aes(x = ACCURATE_EPISODE_DATE, 
                 y = ontario_total, 
                 group = 1),
             color = "black",
             linetype = 2) +
-  geom_text_repel(data = covid_on_city,
+  geom_text_repel(data = covid_on_labels,
                   aes(x = ACCURATE_EPISODE_DATE, 
                       y = city_total,
                       label = Reporting_PHU_City),
                   color = "black",
                   segment.alpha = 0.2,
                   direction = "y",
-                  nudge_x = end_on + 2,
+                  nudge_x = end_on + 5,
                   hjust = 1) +
   scale_y_log10() + 
-  scale_x_date() +
-  xlim(c(start_on, end_on + 2)) +
+  xlim(c(start_on, end_on + 10)) +
   annotation_logticks(sides = "l") +
-  scale_colour_distiller(name = "confirmed cases",
-                         palette = "PuOr",
-                         trans = "log",
-                         breaks = c(1,10,100,1000)) +
+scale_color_distiller(palette = "RdYlGn",
+                      direction = -1,
+                      name = "Total cases") +
   theme_bw() +
-  ylab("number of confirmed cases") +
-  ggtitle("Covid-19 cases in Quebec") +
-  theme(plot.title = element_text(hjust = 0.5),
+  labs(x = "Date",
+       y = "Total number of cases") +
+  ggtitle("Cases over time") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
         panel.grid.minor = element_blank(),
         axis.title = element_text(size = 15))
 
-#ggsave(paste0(covidFigPath,"Ontario_Covid_",today,".jpg"), height = 5, width = 8)
+city_path
+
+ggsave(paste0(covidFigPath,"Ontario_Covid_",today,".jpg"), height = 5, width = 8)
 ```
 
 ## Age distribution of Covid-19 cases
@@ -197,9 +225,9 @@ age_group <-
                     name = "Age Group") +
   labs(x = "Date",
        y = "Total number of cases",
-       title = paste0("Age Distribution of COVID-19 Cases in Ontario \n(",today,")")) +
+       title = paste0("Age distribution of cases")) +
   theme_bw() +
-  theme(plot.title = element_text(hjust = 0.5),
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
         panel.grid.minor = element_blank())
 
 age_group
@@ -216,10 +244,10 @@ case_info<-
   geom_histogram(binwidth = 1) +
   scale_fill_brewer(name = "Case Info") +
   labs(x = "Date",
-       y = "Number of Cases",
-       title = paste0("Case information of COVID-19 in Ontario \n(",today,")")) +
+       y = "Total number of cases",
+       title = paste0("Case information")) +
   theme_bw() +
-  theme(plot.title = element_text(hjust = 0.5),
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
         panel.grid.minor = element_blank())
 
 case_info
@@ -238,10 +266,10 @@ outcomes <-
                 size = 2) +
   scale_color_brewer(palette = 8, direction = -1) +
   labs(x = "Age Group",
-       y = "Count",
-       title = paste0("Age distribution of COVID-19 outcomes in Ontario \n(",today,")")) +
+       y = "Total number of cases",
+       title = paste0("Age distribution of outcomes")) +
   theme_bw() +
-  theme(plot.title = element_text(hjust = 0.5),
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
         panel.grid.minor.x = element_blank())
 
 outcomes
@@ -249,3 +277,32 @@ outcomes
 ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_outcome.jpg"), height = 7, width = 10)
 ```
 
+```{r, fig.height=10}
+
+title <- ggdraw() + 
+  draw_label(
+    paste0("Covid Cases in Ontario (",today,")"),
+    fontface = 'bold',
+    hjust = 0.5,
+    size = 25)
+
+combined_plots <-
+  plot_grid(title,
+    plot_grid(ontario_map, 
+              city_path,
+              nrow = 1,
+              align = "h",
+              axis = "l"),
+    plot_grid(age_group,
+              case_info,
+              outcomes,
+              nrow = 1,
+              align = "h",
+              axis = "b"),
+    nrow = 3,
+    rel_heights = c(0.2, 1, 0.6))
+
+combined_plots
+
+ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_summary.jpg"), height = 10, width = 20)
+```
