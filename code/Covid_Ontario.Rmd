@@ -50,9 +50,6 @@ covid_on <-
   read.csv(paste0(covidPath, "conposcovidloc.csv")) %>%
   mutate(ACCURATE_EPISODE_DATE = as.Date(ACCURATE_EPISODE_DATE))
 
-#get time range for plotting
-start_on <- min(covid_on$ACCURATE_EPISODE_DATE)
-end_on <- max(covid_on$ACCURATE_EPISODE_DATE)
 #header of the data
 covid_on
 
@@ -61,16 +58,17 @@ loc_covid_on <-
   covid_on %>%
   group_by(Reporting_PHU_Latitude, Reporting_PHU_Longitude,Reporting_PHU_City) %>%
   dplyr::summarise(count = n()) %>%
-  arrange(-count, Reporting_PHU_City)
+  arrange(-count, Reporting_PHU_City) %>%
+  filter(count >= 50)
 ```
 #Make Plots
 ## Map of Cases in Ontario
 ```{r, message = F}
 #new map limits
-Lat1 <- min(covid_on$Reporting_PHU_Latitude, na.rm = T) - 0.8
-Lat2 <- max(covid_on$Reporting_PHU_Latitude, na.rm = T) + 0.2
-Lon1 <- min(covid_on$Reporting_PHU_Longitude, na.rm = T) - 0.2
-Lon2 <- max(covid_on$Reporting_PHU_Longitude, na.rm = T) + 0.2
+Lat1 <- min(loc_covid_on$Reporting_PHU_Latitude, na.rm = T) - 0.8
+Lat2 <- max(loc_covid_on$Reporting_PHU_Latitude, na.rm = T) + 0.2
+Lon1 <- min(loc_covid_on$Reporting_PHU_Longitude, na.rm = T) - 0.2
+Lon2 <- max(loc_covid_on$Reporting_PHU_Longitude, na.rm = T) + 0.2
 #crop
 new.ext.on <- raster::extent(c(Lon1,Lon2,Lat1,Lat2))
 ON <- raster::crop(ON, new.ext.on)
@@ -99,16 +97,16 @@ ontario_map <-
                   aes(x=Reporting_PHU_Longitude,
                       y=Reporting_PHU_Latitude,
                       label = Reporting_PHU_City),
-                  size = 2,
-                  segment.size = 0) +
-  scale_size_area(breaks = c(10,100,400),
+                  segment.alpha = 0.3,
+                  fontface= "bold") +
+  scale_size_area(breaks = c(100,250,500),
                   max_size = 15,
                   name = "Count") +
   scale_color_distiller(palette = "RdYlGn",
                         direction = -1,
                         trans = "log10",
                         guide = FALSE) +
-  labs(title = paste0("Cases per city")) +
+  labs(title = paste0("Cities with more than 50 cases")) +
   theme_classic() + 
   theme(axis.title = element_blank(),
         axis.ticks = element_blank(),
@@ -122,10 +120,21 @@ ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_map.jpg"), height = 10, widt
 ```
 ## Cases by city
 ```{r, warning=F}
+covid_on_total <-
+  covid_on %>%
+  group_by(ACCURATE_EPISODE_DATE) %>%
+  dplyr::summarise(ontario_total_day = n()) %>%
+  mutate(total_cumulative = cumsum(ontario_total_day),
+         Reporting_PHU_City = "Total") 
+
+lab <- 
+  tail(covid_on_total, 1) %>% 
+  dplyr::select(ACCURATE_EPISODE_DATE, Reporting_PHU_City, total_cumulative)
+
 covid_on_city <-
   covid_on %>%
   group_by(Reporting_PHU_City) %>%
-  dplyr::summarise(city_total = n()) %>%
+  dplyr::summarise(total = n()) %>%
   left_join( . , covid_on, by = "Reporting_PHU_City")
 
 covid_on_city <-
@@ -133,73 +142,78 @@ covid_on_city <-
   group_by(ACCURATE_EPISODE_DATE, Reporting_PHU_City) %>%
   dplyr::summarise(city_total_day = n()) %>%
   group_by(Reporting_PHU_City) %>%
-  mutate(city_total_cumulative = cumsum(city_total_day)) %>%
+  mutate(total_cumulative = cumsum(city_total_day)) %>%
   left_join( . , covid_on_city, by = c("ACCURATE_EPISODE_DATE","Reporting_PHU_City")) %>%
   arrange(Reporting_PHU_City, ACCURATE_EPISODE_DATE)
 
-covid_on_labels <-
+days_since <-
   covid_on_city %>%
-  dplyr::select(ACCURATE_EPISODE_DATE, Reporting_PHU_City, city_total) %>%
+  dplyr::select(Reporting_PHU_City, ACCURATE_EPISODE_DATE, total_cumulative) %>% 
+  #bind_rows(.,covid_on_total) %>%
+  filter(total_cumulative >= 10) %>%
   unique() %>%
+  arrange(Reporting_PHU_City, ACCURATE_EPISODE_DATE) %>%
+  group_by(Reporting_PHU_City) %>%
+  mutate(days = row_number())
+
+covid_on_labels <-
+  days_since %>%
+  dplyr::select(ACCURATE_EPISODE_DATE, days, Reporting_PHU_City, total_cumulative) %>%
   group_by(Reporting_PHU_City) %>%
   top_n(x = . , n = 1, wt = ACCURATE_EPISODE_DATE) %>%
   ungroup() %>%
-  top_n(x = ., n = 10, wt = city_total)
-
-covid_on_total <-
-  covid_on %>%
-  group_by(ACCURATE_EPISODE_DATE) %>%
-  dplyr::summarise(ontario_total_day = n()) %>%
-  mutate(ontario_total = cumsum(ontario_total_day))
+  #top_n(x = ., n = 11, wt = total_cumulative) %>%
+  mutate(city_name = paste(Reporting_PHU_City, total_cumulative, sep = " : "))
 
 
-city_rate <-
-  covid_on_city %>%
-  dplyr::select(ACCURATE_EPISODE_DATE, Reporting_PHU_City, city_total_cumulative) %>%
+rate <-
+  days_since %>%
+  dplyr::select(ACCURATE_EPISODE_DATE, Reporting_PHU_City, total_cumulative) %>%
   arrange(ACCURATE_EPISODE_DATE) %>%
   group_by(Reporting_PHU_City) %>%
-  mutate(time_diff = ACCURATE_EPISODE_DATE - lag(ACCURATE_EPISODE_DATE),  # just in case there are gaps in data
-         case_diff = city_total_cumulative - lag(city_total_cumulative), # count diff in cases between dates
-         rate_percent = (case_diff / as.numeric(time_diff)) / lag(city_total_cumulative) * 100) %>%# growth rate
+  mutate(time_diff = as.numeric(ACCURATE_EPISODE_DATE - lag(ACCURATE_EPISODE_DATE)),  # just in case there are gaps in data
+         case_diff = total_cumulative - lag(total_cumulative), # count diff in cases between dates
+         rate_percent = ( case_diff / time_diff ) / lag(total_cumulative) * 100) %>%# growth rate
+  filter(Reporting_PHU_City != "Total") %>%
   group_by(Reporting_PHU_City) %>%
-  filter(rate_percent < Inf, # remove infinity from mean rate
-         city_total_cumulative >= 10) %>% #min cases
-  dplyr::summarise(double_time = log(2) / mean(rate_percent, na.rm = TRUE)) %>%
-  left_join( . , covid_on_city, by = "Reporting_PHU_City")
+  filter(rate_percent < Inf) %>% # remove infinity from mean rate
+  dplyr::summarise(growth_rate = mean(rate_percent, na.rm = TRUE),
+                   double_time = log(2) / growth_rate ) %>%
+  left_join( . ,
+             days_since, 
+             by = "Reporting_PHU_City")
+```
 
-
+```{r, fig.height=10}
 city_path <-
   ggplot()+
-  geom_path(data = city_rate,
-            aes(x = ACCURATE_EPISODE_DATE,
-                y = city_total_cumulative,
-                color = double_time,
-                group = Reporting_PHU_City),
-            size = 1.5) +
-  geom_path(data = covid_on_total%>%
-              filter(ontario_total >= 10),
-            aes(x = ACCURATE_EPISODE_DATE, 
-                y = ontario_total, 
-                group = 1),
-            color = "black",
-            linetype = 2) +
-  geom_text_repel(data = covid_on_labels,
-                  aes(x = ACCURATE_EPISODE_DATE, 
-                      y = city_total,
-                      label = Reporting_PHU_City),
+  geom_path(data = rate,
+            aes(x = days,
+                y = total_cumulative,
+                color = growth_rate,
+                group = Reporting_PHU_City)) +
+    geom_point(data = rate,
+            aes(x = days,
+                y = total_cumulative,
+                color = growth_rate)) +
+  geom_label_repel(data = covid_on_labels %>%
+                    filter(total_cumulative >= 50),
+                  aes(x = days, 
+                      y = total_cumulative,
+                      label = city_name),
                   color = "black",
-                  segment.alpha = 0.2,
-                  direction = "y",
-                  nudge_x = end_on + 5,
-                  hjust = 1) +
-  scale_y_log10() + 
-  xlim(c(start_on, end_on + 10)) +
+                  box.padding = 0.8,
+                  hjust = 1,
+                  force = 0.1,
+                  segment.alpha = 0.3,
+                  fontface = "bold") +
   annotation_logticks(sides = "l") +
-scale_color_distiller(palette = "RdYlGn",
-                      direction = -1,
-                      name = "Total cases") +
+  scale_y_log10()+
+  scale_color_distiller(palette = "Reds",
+                        direction = 1,
+                        name = "Growth Rate (%)") +
   theme_bw() +
-  labs(x = "Date",
+  labs(x = "Days since 10th case",
        y = "Total number of cases") +
   ggtitle("Cases over time") +
   theme(plot.title = element_text(hjust = 0.5, size = 20),
@@ -208,7 +222,7 @@ scale_color_distiller(palette = "RdYlGn",
 
 city_path
 
-ggsave(paste0(covidFigPath,"Ontario_Covid_",today,".jpg"), height = 5, width = 8)
+ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_days.jpg"), height = 10, width = 20)
 ```
 
 ## Age distribution of Covid-19 cases
@@ -217,9 +231,9 @@ age_group <-
   ggplot(covid_on%>%
            filter(Age_Group != "Unknown"),
          aes(x = ACCURATE_EPISODE_DATE,
-             fill = Age_Group)) +
+             fill = fct_rev(Age_Group))) +
   geom_histogram(binwidth = 1) +
-  scale_fill_brewer(palette = "RdYlGn",
+  scale_fill_brewer(palette = "Reds",
                     type = "seq",
                     direction = -1,
                     name = "Age Group") +
@@ -228,7 +242,9 @@ age_group <-
        title = paste0("Age distribution of cases")) +
   theme_bw() +
   theme(plot.title = element_text(hjust = 0.5, size = 20),
-        panel.grid.minor = element_blank())
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = 15)) +
+  xlim(c(start_on,end_on))
 
 age_group
 
@@ -242,13 +258,17 @@ case_info<-
          aes(x = ACCURATE_EPISODE_DATE,
              fill = CASE_ACQUISITIONINFO)) +
   geom_histogram(binwidth = 1) +
-  scale_fill_brewer(name = "Case Info") +
+  scale_fill_brewer(palette = "Reds",
+                    name = "Case Info",
+                    direction = -1) +
   labs(x = "Date",
        y = "Total number of cases",
        title = paste0("Case information")) +
   theme_bw() +
   theme(plot.title = element_text(hjust = 0.5, size = 20),
-        panel.grid.minor = element_blank())
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = 15)) +
+  xlim(c(start_on,end_on))
 
 case_info
 
@@ -258,19 +278,23 @@ ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_case_info.jpg"), height = 7,
 ```{r}
 outcomes <-
   ggplot(covid_on %>%
-           filter(Age_Group != "Unknown"),
+           filter(Age_Group != "Unknown") %>%
+           mutate(Outcome = gsub("Yes","Recovered",RESOLVED),
+                  Outcome = gsub("No","Infected",Outcome)),
          aes(x = Age_Group,
-             color = RESOLVED,
-             group = RESOLVED)) +
-  geom_freqpoly(stat = "count",
-                size = 2) +
-  scale_color_brewer(palette = 8, direction = -1) +
+             fill = Outcome,
+             group = Outcome)) +
+  geom_histogram(stat = "count",
+                 size = 2,
+                 position = "dodge") +
+  scale_fill_brewer(palette = "Reds", direction = -1) +
   labs(x = "Age Group",
        y = "Total number of cases",
        title = paste0("Age distribution of outcomes")) +
   theme_bw() +
   theme(plot.title = element_text(hjust = 0.5, size = 20),
-        panel.grid.minor.x = element_blank())
+        panel.grid.minor.x = element_blank(),
+        axis.title = element_text(size = 15))
 
 outcomes
 
@@ -291,7 +315,7 @@ combined_plots <-
     plot_grid(ontario_map, 
               city_path,
               nrow = 1,
-              align = "h",
+              align = "v",
               axis = "l"),
     plot_grid(age_group,
               case_info,
