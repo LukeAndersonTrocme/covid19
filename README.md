@@ -3,10 +3,10 @@ Here are a few scripts I wrote to generate statistical graphics from publicly av
 
 ![Covid19 in Ontario](https://github.com/LukeAndersonTrocme/covid19/blob/master/figures/Ontario_Covid_April-07-2020_summary.jpg?raw=true)
 
+![Covid19 in Canada]
 (https://github.com/LukeAndersonTrocme/covid19/blob/master/figures/Canada_Covid_April%2004,%202020.jpg?raw=true)
 
-![Covid19 in Canada_rate]
-(https://github.com/LukeAndersonTrocme/covid19/blob/master/figures/Canada_Covid_April%2004,%202020_days.jpg?raw=true)
+![Covid19 in Canada_rate](https://github.com/LukeAndersonTrocme/covid19/blob/master/figures/Canada_Covid_April%2004,%202020_days.jpg?raw=true)
 
 ![Covid19 in Quebec](https://github.com/LukeAndersonTrocme/covid19/blob/master/figures/Quebec_Covid_2020-March-31.jpg?raw=true)
 
