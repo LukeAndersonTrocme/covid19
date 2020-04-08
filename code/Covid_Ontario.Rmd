@@ -202,13 +202,30 @@ city_path <-
                       y = total_cumulative,
                       label = city_name),
                   color = "black",
+                  alpha = 0.3,
+                  size = 2.5,
                   box.padding = 0.8,
                   hjust = 1,
                   force = 0.1,
                   segment.alpha = 0.3,
-                  fontface = "bold") +
-  annotation_logticks(sides = "l") +
-  scale_y_log10()+
+                  fontface = "bold",
+                  seed = 1234) +
+    geom_label_repel(data = covid_on_labels %>%
+                    filter(total_cumulative >= 50),
+                  aes(x = days, 
+                      y = total_cumulative,
+                      label = city_name),
+                  color = "black",
+                  fill = NA,
+                  size = 2.5,
+                  box.padding = 0.8,
+                  hjust = 1,
+                  force = 0.1,
+                  segment.alpha = 0.3,
+                  fontface = "bold",
+                  seed = 1234) +
+  #annotation_logticks(sides = "l") +
+  #scale_y_log10()+
   scale_color_distiller(palette = "Reds",
                         direction = 1,
                         name = "Growth Rate (%)") +
@@ -278,16 +295,14 @@ ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_case_info.jpg"), height = 7,
 ```{r}
 outcomes <-
   ggplot(covid_on %>%
-           filter(Age_Group != "Unknown") %>%
-           mutate(Outcome = gsub("Yes","Recovered",RESOLVED),
-                  Outcome = gsub("No","Infected",Outcome)),
+           filter(Age_Group != "Unknown"),
          aes(x = Age_Group,
-             fill = Outcome,
-             group = Outcome)) +
+             fill = OUTCOME1,
+             group = OUTCOME1)) +
   geom_histogram(stat = "count",
                  size = 2,
                  position = "dodge") +
-  scale_fill_brewer(palette = "Reds", direction = -1) +
+  scale_fill_brewer(palette = "Reds", direction = -1, name = "Outcome") +
   labs(x = "Age Group",
        y = "Total number of cases",
        title = paste0("Age distribution of outcomes")) +
