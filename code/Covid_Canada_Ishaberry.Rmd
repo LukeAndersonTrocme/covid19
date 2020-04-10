@@ -147,6 +147,85 @@ province_rate <-
              by = "province")
 ```
 
+```{r}
+pacman::p_load(jsonlite)
+pacman::p_load(tidyverse)
+pacman::p_load(tsibble) # for difference function
+pacman::p_load(lubridate)
+pacman::p_load(colorspace)
+pacman::p_load(ggthemes)
+pacman::p_load(locfit)
+
+DT1 <- readr::read_csv("https://www.inspq.qc.ca/sites/default/files/covid/donnees/graph1.csv?randNum=1586456549279",
+                       col_types = list(col_date("%d/%m/%Y"), col_double(), col_double()))
+DT1 <- 
+  DT1 %>%
+  pivot_longer(
+    cols = c(-Date),
+    names_to = "type") %>%
+  mutate(value = ifelse(value == 0, NA, value)) %>%
+  filter(type == "Nombre cumulatif de cas") %>%
+  mutate(cases_logratio = tsibble::difference(log(value))) %>%
+  filter(Date >= as.Date("2020-03-01"))
+
+DT1
+
+prov_log <-
+  days_since %>%
+  dplyr::select(date_report, days, province, total_cumulative) %>%
+  group_by(province) %>%
+  mutate(cases_logratio = tsibble::difference(log(total_cumulative))) %>%
+  filter(!province %in% c("NWT","PEI","Repatriated","Yukon"))
+
+prov_log
+
+ggplot(prov_log,
+       aes(x = days, 
+           y = cases_logratio,
+           color = province, 
+           group = province)) +
+  geom_point() +
+  geom_smooth(method = "locfit") +
+  #geom_smooth() +
+  ggthemes::theme_hc() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  colorspace::scale_fill_discrete_qualitative() +
+  colorspace::scale_color_discrete_qualitative() +
+  guides(color = F) +
+  xlab("Days since 10th case") +
+  ylab("Daily Rate of increase in cumulative cases\n log(t_p) - log(t_p-1)-") +
+  facet_wrap(.~province) +
+  ylim(c(0,0.65))
+
+```
+
+```{r}
+
+ggplot(DT1,
+       aes(x = Date, 
+           y = cases_logratio)) +
+  geom_point() +
+  geom_smooth(method = "locfit") +
+  ggthemes::theme_hc() +
+  scale_x_date(date_breaks = "1 day", date_labels = "%b %d") +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  colorspace::scale_fill_discrete_qualitative() +
+  colorspace::scale_color_discrete_qualitative() +
+  xlab("Date") +
+  ylab("Daily Rate of increase in cumulative cases\n log(t_p) - log(t_p-1)-")
+
+
+
+```
+
 ```{r, fig.height=10}
 city_path <-
   ggplot()+
