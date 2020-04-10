@@ -16,10 +16,19 @@ output:
 ---
 # Load Libraries and set paths
 ```{r setup}
-library(ggplot2) # plotting functions
-library(ggrepel) # repel label text
-library(dplyr) # data wrangling
-library(tidyverse)
+pacman::p_load(ggplot2) # plotting functions
+pacman::p_load(cowplot) # combine plots
+pacman::p_load(ggrepel) # repel label text
+pacman::p_load(dplyr) # data wrangling
+pacman::p_load(jsonlite)
+pacman::p_load(data.table)
+pacman::p_load(tidyverse)
+pacman::p_load(tsibble) # for difference function
+pacman::p_load(lubridate)
+pacman::p_load(colorspace)
+pacman::p_load(ggthemes)
+pacman::p_load(locfit)
+
 
 #Set Path
 covidPath <- '~/Documents/covid19/data/canada/'
@@ -148,35 +157,12 @@ province_rate <-
 ```
 
 ```{r}
-pacman::p_load(jsonlite)
-pacman::p_load(tidyverse)
-pacman::p_load(tsibble) # for difference function
-pacman::p_load(lubridate)
-pacman::p_load(colorspace)
-pacman::p_load(ggthemes)
-pacman::p_load(locfit)
-
-DT1 <- readr::read_csv("https://www.inspq.qc.ca/sites/default/files/covid/donnees/graph1.csv?randNum=1586456549279",
-                       col_types = list(col_date("%d/%m/%Y"), col_double(), col_double()))
-DT1 <- 
-  DT1 %>%
-  pivot_longer(
-    cols = c(-Date),
-    names_to = "type") %>%
-  mutate(value = ifelse(value == 0, NA, value)) %>%
-  filter(type == "Nombre cumulatif de cas") %>%
-  mutate(cases_logratio = tsibble::difference(log(value))) %>%
-  filter(Date >= as.Date("2020-03-01"))
-
-DT1
-
 prov_log <-
   days_since %>%
   dplyr::select(date_report, days, province, total_cumulative) %>%
   group_by(province) %>%
   mutate(cases_logratio = tsibble::difference(log(total_cumulative))) %>%
   filter(!province %in% c("NWT","PEI","Repatriated","Yukon"))
-
 prov_log
 
 ggplot(prov_log,
@@ -204,26 +190,180 @@ ggplot(prov_log,
 ```
 
 ```{r}
+#Google mobility trends
+mobility_data_url <- "https://raw.githubusercontent.com/nacnudus/google-location-coronavirus/master/2020-04-05-country.tsv"
 
-ggplot(DT1,
-       aes(x = Date, 
-           y = cases_logratio)) +
+download.file(mobility_data_url, destfile = paste0(covidPath, "2020-04-05-country.tsv"), quiet = T)
+
+mobility_data <- 
+  fread(paste0(covidPath, "2020-04-05-country.tsv"), sep = "\t", header = T)
+
+canada_mobility_data <- 
+  mobility_data %>%
+  filter(country_name == "Canada",
+         type == "region") %>%
+  mutate(date_report = as.Date(date),
+         province = gsub("British Columbia","BC", region_name),
+         province = gsub("Newfoundland and Labrador","NL", province)) %>%
+  inner_join( . ,
+              prov_log,
+              by =c("province","date_report"))
+
+canada_mobility_data
+```
+```{r}
+Residential <- canada_mobility_data %>%
+         filter(category %like% 'Residential',
+                province %like% 'Ontario|Quebec',
+                date_report >= as.Date("2020-03-12")) %>%
+  dplyr::select(province, total_cumulative, date_report, trend, cases_logratio, category, baseline_comparison)
+
+Residential_mob_cumulative <-
+ggplot(Residential,
+       aes(x = date_report, 
+           y = total_cumulative,
+           color = cases_logratio)) +
   geom_point() +
-  geom_smooth(method = "locfit") +
   ggthemes::theme_hc() +
-  scale_x_date(date_breaks = "1 day", date_labels = "%b %d") +
-  theme(
-    legend.position = "bottom",
-    legend.title = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  ) +
-  colorspace::scale_fill_discrete_qualitative() +
+  scale_y_log10() +
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black", limits = c(0,0.51)) +
+  labs(x = "Date", y = "Cumulative Cases") +
+  facet_wrap(.~province, nrow = 1) +
+  guides(color = F)
+
+Residential_mob_log <-
+ggplot(Residential,
+       aes(x = date_report, 
+           y = trend,
+           color = cases_logratio)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black", limits = c(0,0.51)) +
+  labs(x = "Date", y = "Residential Mobility") +
+  facet_wrap(.~province, nrow = 1) +
+  theme(legend.position = "left")
+
+plot_grid(Residential_mob_cumulative,
+          Residential_mob_log,
+          nrow = 2)
+
+Residential_log_cumulative <-
+ggplot(Residential,
+       aes(x = cases_logratio, 
+           y = total_cumulative)) +
+  geom_point() +
+  ggthemes::theme_hc() + 
+  scale_y_log10() +
+  labs(x = "Log Ratio", y = "Cumulative Cases") +
+  facet_wrap(.~province, nrow = 1)
+
+Residential_mob_logRatio <-
+ggplot(Residential,
+       aes(x = cases_logratio, 
+           y = trend)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  labs(x = "Log Ratio", y = "Residential Mobility") +
+  facet_wrap(.~province, nrow = 1)
+
+plot_grid(
+  plot_grid(Residential_mob_cumulative,
+            Residential_mob_log,
+            nrow = 2,
+            align = "v",
+            axis = "l"),
+  plot_grid(Residential_log_cumulative,
+            Residential_mob_logRatio,
+            nrow = 2),
+  align = "h",
+  axis = "l",
+  rel_widths = c(1.5,1))
+```
+
+```{r}
+workplace <- canada_mobility_data %>%
+         filter(category %like% 'Workplace',
+                province %like% 'Ontario|Quebec',
+                date_report >= as.Date("2020-03-12")) %>%
+  dplyr::select(province, total_cumulative, date_report, trend, cases_logratio, category, baseline_comparison)
+
+workplace_mob_cumulative <-
+ggplot(workplace,
+       aes(x = date_report, 
+           y = total_cumulative,
+           color = cases_logratio)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  scale_y_log10() +
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black", limits = c(0,0.51)) +
+  labs(x = "Date", y = "Cumulative Cases") +
+  facet_wrap(.~province, nrow = 1) +
+  guides(color = F)
+
+workplace_mob_log <-
+ggplot(workplace,
+       aes(x = date_report, 
+           y = trend,
+           color = cases_logratio)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black", limits = c(0,0.51)) +
+  labs(x = "Date", y = "Workplace Mobility") +
+  facet_wrap(.~province, nrow = 1) +
+  theme(legend.position = "left")
+
+plot_grid(workplace_mob_cumulative,
+          workplace_mob_log,
+          nrow = 2)
+
+workplace_log_cumulative <-
+ggplot(workplace,
+       aes(x = cases_logratio, 
+           y = total_cumulative)) +
+  geom_point() +
+  ggthemes::theme_hc() + 
+  scale_y_log10() +
+  labs(x = "Log Ratio", y = "Cumulative Cases") +
+  facet_wrap(.~province, nrow = 1)
+
+workplace_mob_logRatio <-
+ggplot(workplace,
+       aes(x = cases_logratio, 
+           y = trend)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  labs(x = "Log Ratio", y = "Workplace Mobility") +
+  facet_wrap(.~province, nrow = 1)
+
+plot_grid(
+  plot_grid(workplace_mob_cumulative,
+            workplace_mob_log,
+            nrow = 2,
+            align = "v",
+            axis = "l"),
+  plot_grid(workplace_log_cumulative,
+            workplace_mob_logRatio,
+            nrow = 2),
+  align = "h",
+  axis = "l",
+  rel_widths = c(1.5,1))
+```
+
+
+
+```{r}
+
+ggplot(canada_mobility_data,
+       aes(x = as.Date(date),
+           y = trend,
+           color = region_name)) +
+  geom_path() +
   colorspace::scale_color_discrete_qualitative() +
-  xlab("Date") +
-  ylab("Daily Rate of increase in cumulative cases\n log(t_p) - log(t_p-1)-")
-
-
-
+  guides(color = F) +
+  facet_grid(region_name ~ category, scales = "free_y") +
+  labs( x = "Date",
+        y = "Trend",
+        title = "COVID-19 Community Mobility Report")
 ```
 
 ```{r, fig.height=10}
