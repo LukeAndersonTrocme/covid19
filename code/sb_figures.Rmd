@@ -1,0 +1,465 @@
+---
+title: "covid19"
+author: "by Sahir Bhatnagar"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: false
+    number_sections: true
+    toc_depth: 4
+    keep_md: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# Load Libraries and set paths
+```{r setup}
+pacman::p_load(ggplot2) # plotting functions
+pacman::p_load(cowplot) # combine plots
+pacman::p_load(ggrepel) # repel label text
+pacman::p_load(dplyr) # data wrangling
+pacman::p_load(jsonlite)
+pacman::p_load(data.table)
+pacman::p_load(tidyverse)
+pacman::p_load(tsibble) # for difference function
+pacman::p_load(lubridate)
+pacman::p_load(colorspace)
+pacman::p_load(ggthemes)
+pacman::p_load(locfit)
+pacman::p_load(here)
+
+#Set Path
+covidPath <- here::here('data/canada/')
+covidFigPath <- here::here('figures/')
+
+today <- format(Sys.Date(), "%Y-%B-%d")
+
+# Province name abbreviations
+abbreviations <- read.csv(paste0(covidPath, "pr_name_abb.csv")) 
+```
+
+# Load Data
+```{r, warning = F, message = F}
+##################################################
+# COVID-19 Canada Open Data Working Group. 
+# Epidemiological Data from the COVID-19 Outbreak in Canada. 
+# https://github.com/ishaberry/Covid19Canada.
+##################################################
+
+#github path
+ishaberry_data_url <- "https://raw.githubusercontent.com/ishaberry/Covid19Canada/master/"
+
+##################################################
+# Download latest data
+##################################################
+
+# update_time.txt: Date and time of update
+download.file(paste0(ishaberry_data_url,"update_time.txt"), 
+              destfile = paste0(covidPath, "update_time.txt"), quiet = T)
+updatetime <- read.table(paste0(covidPath, "update_time.txt"))
+today <- format(as.Date(update_time$V1), "%B %d, %Y")
+today
+##################################################
+
+# cases.csv: Individual-level cases
+download_covid <- function(type, 
+                           path = covidPath, 
+                           update_time = updatetime, 
+                           url = ishaberry_data_url){
+  if (file.exists(paste0(path, type))) {
+    # only download if out of date
+    if (lubridate::as_date(updatetime$V1) > file.info(paste0(path, type))[["ctime"]]) {
+      download.file(paste0(url,type), 
+                    destfile = paste0(covidPath, type), quiet = T)
+    }
+  } else {
+    # or download if file doesnt exisit
+    download.file(paste0(url, type), 
+                  destfile = paste0(path, type), quiet = T)
+  }
+
+  DT <- read.csv(paste0(path, type)) 
+  DT
+}
+
+cases <- download_covid(type = "cases.csv") %>%
+    mutate(date_report = as.Date(date_report, "%d-%m-%Y"))
+
+
+# mortality.csv: Individual-level mortality
+mortality <- download_covid(type = "mortality.csv")
+mortality
+
+# recovered_cumulative.csv: Time series of cumulative recovered
+recovered_cumulative <- download_covid(type = "recovered_cumulative.csv")
+recovered_cumulative
+
+# testing_cumulative.csv: Time series of cumulative testing
+testing_cumulative <- download_covid("testing_cumulative.csv")
+testing_cumulative
+```
+
+## Cases by province
+```{r, warning=F}
+#health_region
+
+canada_total <-
+  cases %>%
+  group_by(date_report) %>%
+  dplyr::summarise(canada_total_day = n()) %>%
+  mutate(total_cumulative = cumsum(canada_total_day),
+         province = "Total") 
+
+lab <- 
+  tail(canada_total, 1) %>% 
+  dplyr::select(date_report, province, total_cumulative)
+
+province_total <-
+  cases %>%
+  group_by(province) %>%
+  dplyr::summarise(total = n()) %>%
+  left_join( . , cases, by = "province")
+
+province_total <-
+  province_total %>%
+  group_by(date_report, province) %>%
+  dplyr::summarise(province_total_day = n()) %>%
+  group_by(province) %>%
+  mutate(total_cumulative = cumsum(province_total_day)) %>%
+  left_join( . , province_total, by = c("date_report","province")) %>%
+  arrange(province, date_report)
+
+days_since <-
+  province_total %>%
+  dplyr::select(province, date_report, total_cumulative) %>% 
+  #bind_rows(.,covid_on_total) %>%
+  filter(total_cumulative >= 10) %>%
+  unique() %>%
+  arrange(province, date_report) %>%
+  group_by(province) %>%
+  mutate(days = row_number())
+
+canada_days_labels <-
+  days_since %>%
+  dplyr::select(date_report, days, province, total_cumulative) %>%
+  group_by(province) %>%
+  top_n(x = . , n = 1, wt = date_report) %>%
+  ungroup() %>%
+  #top_n(x = ., n = 11, wt = total_cumulative) %>%
+  mutate(province_name = paste(province, total_cumulative, sep = " : "))
+
+
+province_rate <-
+  days_since %>%
+  dplyr::select(date_report, days, province, total_cumulative) %>%
+  arrange(date_report) %>%
+  group_by(province) %>%
+  mutate(time_diff = as.numeric(date_report - lag(date_report)),  # just in case there are gaps in data
+         case_diff = total_cumulative - lag(total_cumulative), # count diff in cases between dates
+         rate_percent = ( case_diff / time_diff ) / lag(total_cumulative) * 100) %>%# growth rate
+  filter(province != "Total") %>%
+  group_by(province) %>%
+  filter(rate_percent < Inf) %>% # remove infinity from mean rate
+  dplyr::summarise(growth_rate = mean(rate_percent, na.rm = TRUE),
+                   double_time = log(2) / growth_rate ) %>%
+  left_join( . ,
+             days_since, 
+             by = "province")
+```
+
+```{r}
+prov_log <-
+  days_since %>%
+  dplyr::select(date_report, days, province, total_cumulative) %>%
+  group_by(province) %>%
+  mutate(cases_logratio = tsibble::difference(log(total_cumulative))) %>%
+  filter(!province %in% c("NWT","PEI","Repatriated","Yukon"))
+prov_log
+
+ggplot(prov_log,
+       aes(x = days, 
+           y = cases_logratio,
+           color = province, 
+           group = province)) +
+  geom_point() +
+  geom_smooth(method = "locfit") +
+  #geom_smooth() +
+  ggthemes::theme_hc() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  colorspace::scale_fill_discrete_qualitative() +
+  colorspace::scale_color_discrete_qualitative() +
+  guides(color = F) +
+  xlab("Days since 10th case") +
+  ylab("Daily Rate of increase in cumulative cases\n log(t_p) - log(t_p-1)-") +
+  facet_wrap(.~province) +
+  ylim(c(0,0.65))
+
+```
+
+```{r}
+#Google mobility trends
+mobility_data_url <- "https://raw.githubusercontent.com/nacnudus/google-location-coronavirus/master/2020-04-05-country.tsv"
+
+download.file(mobility_data_url, destfile = paste0(covidPath, "2020-04-05-country.tsv"), quiet = T)
+
+mobility_data <- 
+  fread(paste0(covidPath, "2020-04-05-country.tsv"), sep = "\t", header = T)
+
+canada_mobility_data <- 
+  mobility_data %>%
+  filter(country_name == "Canada",
+         type == "region") %>%
+  mutate(date_report = as.Date(date),
+         province = gsub("British Columbia","BC", region_name),
+         province = gsub("Newfoundland and Labrador","NL", province)) %>%
+  inner_join( . ,
+              prov_log,
+              by =c("province","date_report"))
+
+canada_mobility_data
+```
+```{r}
+Residential <- canada_mobility_data %>%
+         filter(category %like% 'Residential',
+                province %like% 'Ontario|Quebec',
+                date_report >= as.Date("2020-03-12")) %>%
+  dplyr::select(province, total_cumulative, date_report, trend, cases_logratio, category, baseline_comparison)
+
+Residential_mob_cumulative <-
+ggplot(Residential,
+       aes(x = date_report, 
+           y = total_cumulative,
+           color = cases_logratio)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  scale_y_log10() +
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black", limits = c(0,0.51)) +
+  labs(x = "Date", y = "Cumulative Cases") +
+  facet_wrap(.~province, nrow = 1) +
+  guides(color = F)
+
+Residential_mob_log <-
+ggplot(Residential,
+       aes(x = date_report, 
+           y = trend,
+           color = cases_logratio)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black", limits = c(0,0.51)) +
+  labs(x = "Date", y = "Residential Mobility") +
+  facet_wrap(.~province, nrow = 1) +
+  theme(legend.position = "left")
+
+plot_grid(Residential_mob_cumulative,
+          Residential_mob_log,
+          nrow = 2)
+
+Residential_log_cumulative <-
+ggplot(Residential,
+       aes(x = cases_logratio, 
+           y = total_cumulative)) +
+  geom_point() +
+  ggthemes::theme_hc() + 
+  scale_y_log10() +
+  labs(x = "Log Ratio", y = "Cumulative Cases") +
+  facet_wrap(.~province, nrow = 1)
+
+Residential_mob_logRatio <-
+ggplot(Residential,
+       aes(x = cases_logratio, 
+           y = trend)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  labs(x = "Log Ratio", y = "Residential Mobility") +
+  facet_wrap(.~province, nrow = 1)
+
+plot_grid(
+  plot_grid(Residential_mob_cumulative,
+            Residential_mob_log,
+            nrow = 2,
+            align = "v",
+            axis = "l"),
+  plot_grid(Residential_log_cumulative,
+            Residential_mob_logRatio,
+            nrow = 2),
+  align = "h",
+  axis = "l",
+  rel_widths = c(1.5,1))
+```
+
+```{r}
+workplace <- canada_mobility_data %>%
+         filter(category %like% 'Workplace',
+                province %like% 'Ontario|Quebec',
+                date_report >= as.Date("2020-03-12")) %>%
+  dplyr::select(province, total_cumulative, date_report, trend, cases_logratio, category, baseline_comparison)
+
+workplace_mob_cumulative <-
+ggplot(workplace,
+       aes(x = date_report, 
+           y = total_cumulative,
+           color = cases_logratio)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  scale_y_log10() +
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black", limits = c(0,0.51)) +
+  labs(x = "Date", y = "Cumulative Cases") +
+  facet_wrap(.~province, nrow = 1) +
+  guides(color = F)
+
+workplace_mob_log <-
+ggplot(workplace,
+       aes(x = date_report, 
+           y = trend,
+           color = cases_logratio)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black", limits = c(0,0.51)) +
+  labs(x = "Date", y = "Workplace Mobility") +
+  facet_wrap(.~province, nrow = 1) +
+  theme(legend.position = "left")
+
+plot_grid(workplace_mob_cumulative,
+          workplace_mob_log,
+          nrow = 2)
+
+workplace_log_cumulative <-
+ggplot(workplace,
+       aes(x = cases_logratio, 
+           y = total_cumulative)) +
+  geom_point() +
+  ggthemes::theme_hc() + 
+  scale_y_log10() +
+  labs(x = "Log Ratio", y = "Cumulative Cases") +
+  facet_wrap(.~province, nrow = 1)
+
+workplace_mob_logRatio <-
+ggplot(workplace,
+       aes(x = cases_logratio, 
+           y = trend)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  labs(x = "Log Ratio", y = "Workplace Mobility") +
+  facet_wrap(.~province, nrow = 1)
+
+plot_grid(
+  plot_grid(workplace_mob_cumulative,
+            workplace_mob_log,
+            nrow = 2,
+            align = "v",
+            axis = "l"),
+  plot_grid(workplace_log_cumulative,
+            workplace_mob_logRatio,
+            nrow = 2),
+  align = "h",
+  axis = "l",
+  rel_widths = c(1.5,1))
+```
+
+
+
+```{r}
+
+ggplot(canada_mobility_data,
+       aes(x = as.Date(date),
+           y = trend,
+           color = region_name)) +
+  geom_path() +
+  colorspace::scale_color_discrete_qualitative() +
+  guides(color = F) +
+  facet_grid(region_name ~ category, scales = "free_y") +
+  labs( x = "Date",
+        y = "Trend",
+        title = "COVID-19 Community Mobility Report")
+```
+
+```{r, fig.height=10}
+city_path <-
+  ggplot()+
+  geom_path(data = province_rate,
+            aes(x = days,
+                y = total_cumulative,
+                color = growth_rate,
+                group = province)) +
+    geom_point(data = province_rate,
+            aes(x = days,
+                y = total_cumulative,
+                color = growth_rate)) +
+  geom_label_repel(data = canada_days_labels,
+                  aes(x = days, 
+                      y = total_cumulative,
+                      label = province_name),
+                  color = "black",
+                  box.padding = 0.8,
+                  hjust = 1,
+                  force = 0.1,
+                  segment.alpha = 0.3,
+                  fontface = "bold") +
+  annotation_logticks(sides = "l") +
+  scale_y_log10()+
+  scale_color_distiller(palette = "Reds",
+                        direction = 1,
+                        name = "Growth Rate (%)") +
+  theme_bw() +
+  labs(x = "Days since 10th case",
+       y = "Total number of cases") +
+  ggtitle("Cases over time") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = 15))
+
+city_path
+
+ggsave(paste0(covidFigPath,"Canada_Covid_",today,"_days.jpg"), height = 10, width = 20)
+```
+
+# Make Plot
+```{r, warning=F}
+#get time range for plotting
+start <- min(canada_total$date_report)
+end <- max(canada_total$date_report)
+
+ggplot()+
+  geom_path(data = province_total,
+            aes(x = date_report, 
+                y = total_cumulative, 
+                color = total_cumulative,
+                group = province),
+            size = 1.5) +
+  geom_path(data = canada_total,
+            aes(x = date_report, 
+                y = total_cumulative, 
+                group = 1),
+            color = "black",
+            linetype = 2) +
+  geom_label_repel(data = canada_days_labels,
+                  aes(x = date_report, 
+                      y = total_cumulative,
+                      label = province_name),
+                  color = "black",
+                  box.padding = 0.8,
+                  hjust = 1,
+                  force = 0.1,
+                  segment.alpha = 0.3,
+                  fontface = "bold") +
+  xlim(c(start, end + 5)) +
+  scale_y_log10() + 
+  annotation_logticks(sides = "l") +
+  scale_colour_distiller(name = "confirmed cases",
+                         palette = "PuOr",
+                         trans = "log",
+                         breaks = c(1,10,100,1000)) +
+  theme_bw() +
+  ylab("number of confirmed cases") +
+  ggtitle("Covid-19 cases in Canada") +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = 15))
+
+ggsave(paste0(covidFigPath,"Canada_Covid_",today,".jpg"), height = 10, width = 20)
+```
