@@ -58,27 +58,34 @@ ishaberry_data_url <- "https://raw.githubusercontent.com/ishaberry/Covid19Canada
 download.file(paste0(ishaberry_data_url,"update_time.txt"), 
               destfile = paste0(covidPath, "update_time.txt"), quiet = T)
 updatetime <- read.table(paste0(covidPath, "update_time.txt"))
-today <- format(as.Date(update_time$V1), "%B %d, %Y")
+today <- as.POSIXct(paste(updatetime[,1],updatetime[,2],updatetime[,3]))
 today
 ##################################################
 
-# cases.csv: Individual-level cases
+
 download_covid <- function(type, 
                            path = covidPath, 
                            update_time = updatetime, 
                            url = ishaberry_data_url){
+
+  most_recent_data_update <- as.POSIXct(paste(update_time[,1],update_time[,2],update_time[,3]))
+  
   if (file.exists(paste0(path, type))) {
     # only download if out of date
-    if (lubridate::as_date(updatetime$V1) > file.info(paste0(path, type))[["ctime"]]) {
+    if (most_recent_data_update > file.info(paste0(path, type))[["ctime"]]) {
+      message(sprintf("%s out of date. downloading %s version", type, most_recent_data_update))
       download.file(paste0(url,type), 
                     destfile = paste0(covidPath, type), quiet = T)
+    } else {
+      message(sprintf("%s is up to date. no need to download again", type))
     }
   } else {
+    message(sprintf("%s does not exist. downloading %s version to %s from %s", type, most_recent_data_update, path, url))
     # or download if file doesnt exisit
     download.file(paste0(url, type), 
                   destfile = paste0(path, type), quiet = T)
   }
-
+  
   DT <- read.csv(paste0(path, type)) 
   DT
 }
