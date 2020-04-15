@@ -28,6 +28,8 @@ pacman::p_load(colorspace)
 pacman::p_load(ggthemes)
 pacman::p_load(locfit)
 pacman::p_load(here)
+pacman::p_load(paletteer)
+pacman::p_load(prismatic)
 
 #Set Path
 covidPath <- here::here('data/canada/')
@@ -93,120 +95,277 @@ download_covid <- function(type,
 cases <- download_covid(type = "cases.csv") %>%
     mutate(date_report = as.Date(date_report, "%d-%m-%Y"))
 
+# head(cases)
 
 # mortality.csv: Individual-level mortality
 mortality <- download_covid(type = "mortality.csv")
-mortality
+# mortality
 
 # recovered_cumulative.csv: Time series of cumulative recovered
 recovered_cumulative <- download_covid(type = "recovered_cumulative.csv")
-recovered_cumulative
+# recovered_cumulative
 
 # testing_cumulative.csv: Time series of cumulative testing
 testing_cumulative <- download_covid("testing_cumulative.csv")
-testing_cumulative
+# testing_cumulative
 ```
 
 ## Cases by province
 ```{r, warning=F}
 #health_region
+mortality <- mortality %>% 
+  select(death_id, province_death_id, age, sex, province, date_death_report) %>% 
+  rename(Date = date_death_report) %>% 
+  mutate(Date = as.Date(Date, "%d-%m-%Y")) %>% 
+  group_by(province, Date) %>% 
+  dplyr::summarise(deaths = n()) 
 
-canada_total <-
-  cases %>%
-  group_by(date_report) %>%
-  dplyr::summarise(canada_total_day = n()) %>%
-  mutate(total_cumulative = cumsum(canada_total_day),
-         province = "Total") 
+mortality$province %>% levels
 
-lab <- 
-  tail(canada_total, 1) %>% 
-  dplyr::select(date_report, province, total_cumulative)
+testing_cumulative <- testing_cumulative %>% 
+  rename(Date = date_testing, cu_testing = cumulative_testing) %>% 
+  mutate(Date = as.Date(Date, "%d-%m-%Y"))
 
-province_total <-
-  cases %>%
-  group_by(province) %>%
-  dplyr::summarise(total = n()) %>%
-  left_join( . , cases, by = "province")
-
-province_total <-
-  province_total %>%
-  group_by(date_report, province) %>%
-  dplyr::summarise(province_total_day = n()) %>%
-  group_by(province) %>%
-  mutate(total_cumulative = cumsum(province_total_day)) %>%
-  left_join( . , province_total, by = c("date_report","province")) %>%
-  arrange(province, date_report)
-
-days_since <-
-  province_total %>%
-  dplyr::select(province, date_report, total_cumulative) %>% 
-  #bind_rows(.,covid_on_total) %>%
-  filter(total_cumulative >= 10) %>%
-  unique() %>%
-  arrange(province, date_report) %>%
-  group_by(province) %>%
-  mutate(days = row_number())
-
-canada_days_labels <-
-  days_since %>%
-  dplyr::select(date_report, days, province, total_cumulative) %>%
-  group_by(province) %>%
-  top_n(x = . , n = 1, wt = date_report) %>%
-  ungroup() %>%
-  #top_n(x = ., n = 11, wt = total_cumulative) %>%
-  mutate(province_name = paste(province, total_cumulative, sep = " : "))
+recovered_cumulative <- recovered_cumulative %>% 
+  rename(Date = date_recovered, cu_recovered = cumulative_recovered) %>% 
+  mutate(Date = as.Date(Date, "%d-%m-%Y"))
 
 
-province_rate <-
-  days_since %>%
-  dplyr::select(date_report, days, province, total_cumulative) %>%
-  arrange(date_report) %>%
-  group_by(province) %>%
-  mutate(time_diff = as.numeric(date_report - lag(date_report)),  # just in case there are gaps in data
-         case_diff = total_cumulative - lag(total_cumulative), # count diff in cases between dates
-         rate_percent = ( case_diff / time_diff ) / lag(total_cumulative) * 100) %>%# growth rate
-  filter(province != "Total") %>%
-  group_by(province) %>%
-  filter(rate_percent < Inf) %>% # remove infinity from mean rate
-  dplyr::summarise(growth_rate = mean(rate_percent, na.rm = TRUE),
-                   double_time = log(2) / growth_rate ) %>%
-  left_join( . ,
-             days_since, 
-             by = "province")
+cases <- cases %>% 
+  select(case_id, provincial_case_id,age,sex,province, date_report) %>% 
+  rename(Date = date_report) %>% 
+  group_by(province, Date) %>% 
+  dplyr::summarise(cases = n()) 
+
+
+
+DT <- cases %>% 
+  full_join(mortality, by = c("Date","province")) %>% 
+  full_join(testing_cumulative, by = c("Date","province")) %>% 
+  full_join(recovered_cumulative, by = c("Date","province")) %>% 
+  group_by(province) %>% 
+  arrange(Date) %>% 
+  replace_na(list(cases = 0, deaths = 0)) %>% 
+  mutate(cu_cases = cumsum(cases), 
+         cu_deaths = cumsum(deaths),
+         lr_cases = tsibble::difference(log(cu_cases)),
+         lr_deaths = tsibble::difference(log(cu_deaths))) 
+  
+
+
+## Convenince "Not in" operator
+"%nin%" <- function(x, y) {
+  return( !(x %in% y) )
+}
+
+
+## Countries to highlight
+focus_cn <- unique(DT_curve$province)
+focus_cn <- c("Quebec","Ontario")
+
+## Colors
+cgroup_cols <- c(clr_darken(paletteer_d("ggsci::category20_d3"), 0.2)[1:length(focus_cn)], "gray70")
+
+# Cumulative cases
+DT %>% 
+  filter(cu_cases > 99) %>% 
+  mutate(days_elapsed = Date - min(Date),
+         end_label = ifelse(Date == max(Date), province, NA),
+         cgroup = case_when(province %in% focus_cn ~ province,
+                            TRUE ~ "ZZOTHER")
+  ) %>% 
+  ggplot(mapping = aes(x = days_elapsed, y = cu_cases,
+         color = cgroup, label = end_label,
+         group = province)) +
+  geom_line(size = 0.5) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) +
+  guides(color = FALSE) +
+  scale_color_manual(values = cgroup_cols) +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1),
+                     breaks = 2^seq(4, 19, 1),
+                     trans = "log2") +
+  labs(x = "Days Since 100th Confirmed Case",
+       y = "Cumulative Number of Reported Cases (log2 scale)",
+       title = "Cumulative Reported Cases of COVID-19, Selected Provinces",
+       subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
+       caption = "Sahir Bhatnagar @syfi_24 / Data: https://github.com/ishaberry/Covid19Canada") +
+  theme_minimal()
 ```
+
+
+## Deaths by province
+```{r}
+# Cumulative deaths
+DT %>% 
+  filter(cu_cases > 99) %>% 
+  mutate(days_elapsed = Date - min(Date),
+         end_label = ifelse(Date == max(Date), province, NA),
+         cgroup = case_when(province %in% focus_cn ~ province,
+                            TRUE ~ "ZZOTHER")
+  ) %>% 
+  ggplot(mapping = aes(x = days_elapsed, y = cu_deaths,
+         color = cgroup, label = end_label,
+         group = province)) +
+  geom_line(size = 0.5) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) +
+  guides(color = FALSE) +
+  scale_color_manual(values = cgroup_cols) +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1),
+                     breaks = 2^seq(4, 19, 1),
+                     trans = "log2") +
+  labs(x = "Days Since 100th Confirmed Case",
+       y = "Cumulative Number of Reported Deahts (log2 scale)",
+       title = "Cumulative Reported Deaths of COVID-19, Selected Provinces",
+       subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
+       caption = "Sahir Bhatnagar @syfi_24 / Data: https://github.com/ishaberry/Covid19Canada") +
+  theme_minimal()
+```
+
+
+## Log ratio of Cases
+```{r}
+# lrratio
+DT %>% 
+  filter(cu_cases > 99, province %in% focus_cn) %>% 
+  mutate(days_elapsed = Date - min(Date),
+         end_label = ifelse(Date == max(Date), province, NA),
+         cgroup = case_when(province %in% focus_cn ~ province,
+                            TRUE ~ "ZZOTHER")
+  ) %>% 
+  ggplot(mapping = aes(x = days_elapsed, y = lr_cases,
+         color = cgroup, label = end_label,
+         group = province)) +
+  geom_point() +
+  geom_smooth(method = "locfit", se = F) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) +
+  guides(color = FALSE) +
+  scale_color_manual(values = cgroup_cols) +
+  # coord_cartesian(ylim = c(-0.05,1))+
+  # scale_y_continuous(labels = scales::comma_format(accuracy = 1),
+  #                    breaks = 2^seq(4, 19, 1),
+  #                    trans = "log2") +
+  labs(x = "Days Since 100th Confirmed Case",
+       y = "Cumulative Number of Reported Deahts (log2 scale)",
+       title = "Cumulative Reported Deaths of COVID-19, Selected Provinces",
+       subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
+       caption = "Sahir Bhatnagar @syfi_24 / Data: https://github.com/ishaberry/Covid19Canada") +
+  theme_minimal()
+```
+
+
+## Cases over number of tests
+```{r}
+# lrratio
+DT %>% 
+  filter(cu_cases > 99) %>% 
+  mutate(days_elapsed = Date - min(Date),
+         end_label = ifelse(Date == max(Date), province, NA),
+         cgroup = case_when(province %in% focus_cn ~ province,
+                            TRUE ~ "ZZOTHER")
+  ) %>% 
+  ggplot(mapping = aes(x = days_elapsed, y = cu_cases/cu_testing*1000,
+         color = cgroup, label = end_label,
+         group = province)) +
+  geom_point() +
+  geom_smooth(method = "locfit", se = F) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) +
+  guides(color = FALSE) +
+  scale_color_manual(values = cgroup_cols) +
+  # coord_cartesian(ylim = c(-0.05,1))+
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1)) + #,
+                     # breaks = 2^seq(4, 19, 1),
+                     # trans = "log2") +
+  labs(x = "Days Since 100th Confirmed Case",
+       y = "Number of Cases per 1000 Tests",
+       title = "Number of Cases per 1000 Tests, Selected Provinces",
+       subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
+       caption = "Sahir Bhatnagar @syfi_24 / Data: https://github.com/ishaberry/Covid19Canada") +
+  theme_minimal()
+```
+
+
+## Deaths over number of cases
+```{r}
+# lrratio
+DT %>% 
+  filter(cu_cases > 99) %>% 
+  mutate(days_elapsed = Date - min(Date),
+         end_label = ifelse(Date == max(Date), province, NA),
+         cgroup = case_when(province %in% focus_cn ~ province,
+                            TRUE ~ "ZZOTHER")
+  ) %>% 
+  ggplot(mapping = aes(x = days_elapsed, y = cu_deaths/cu_cases,
+         color = cgroup, label = end_label,
+         group = province)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "locfit", se = F) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) +
+  guides(color = FALSE) +
+  scale_color_manual(values = cgroup_cols) +
+  # coord_cartesian(ylim = c(-0.05,1))+
+  scale_y_continuous(labels = scales::number_format(scale = 100)) + #,
+                     # breaks = 2^seq(4, 19, 1),
+                     # trans = "log2") +
+  labs(x = "Days Since 100th Confirmed Case",
+       y = "Case Fatality Rate (%)",
+       title = "Number of Reported Deaths from COVID over Number of Reported COVID Cases, Selected Provinces",
+       subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
+       caption = "Sahir Bhatnagar @syfi_24 / Data: https://github.com/ishaberry/Covid19Canada") +
+  theme_cowplot()
+```
+
+## Log ratio of Deaths
+```{r}
+# lrratio
+DT %>% 
+  filter(cu_cases > 99, province %in% focus_cn) %>% 
+  mutate(days_elapsed = Date - min(Date),
+         end_label = ifelse(Date == max(Date), province, NA),
+         cgroup = case_when(province %in% focus_cn ~ province,
+                            TRUE ~ "ZZOTHER")
+  ) %>% 
+  ggplot(mapping = aes(x = days_elapsed, y = lr_deaths,
+         color = cgroup, label = end_label,
+         group = province)) +
+  geom_point() +
+  geom_smooth(method = "locfit", se = F) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) +
+  guides(color = FALSE) +
+  scale_color_manual(values = cgroup_cols) +
+  coord_cartesian(ylim = c(-0.05,1))+
+  # scale_y_continuous(labels = scales::comma_format(accuracy = 1),
+  #                    breaks = 2^seq(4, 19, 1),
+  #                    trans = "log2") +
+  labs(x = "Days Since 100th Confirmed Case",
+       y = "Cumulative Number of Reported Deahts (log2 scale)",
+       title = "Cumulative Reported Deaths of COVID-19, Selected Provinces",
+       subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
+       caption = "Sahir Bhatnagar @syfi_24 / Data: https://github.com/ishaberry/Covid19Canada") +
+  theme_minimal()
+```
+
+
 
 ```{r}
-prov_log <-
-  days_since %>%
-  dplyr::select(date_report, days, province, total_cumulative) %>%
-  group_by(province) %>%
-  mutate(cases_logratio = tsibble::difference(log(total_cumulative))) %>%
-  filter(!province %in% c("NWT","PEI","Repatriated","Yukon"))
-prov_log
-
-ggplot(prov_log,
-       aes(x = days, 
-           y = cases_logratio,
-           color = province, 
-           group = province)) +
-  geom_point() +
-  geom_smooth(method = "locfit") +
-  #geom_smooth() +
-  ggthemes::theme_hc() +
-  theme(
-    legend.position = "bottom",
-    legend.title = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  ) +
-  colorspace::scale_fill_discrete_qualitative() +
-  colorspace::scale_color_discrete_qualitative() +
-  guides(color = F) +
-  xlab("Days since 10th case") +
-  ylab("Daily Rate of increase in cumulative cases\n log(t_p) - log(t_p-1)-") +
-  facet_wrap(.~province) +
-  ylim(c(0,0.65))
-
+knitr::knit_exit()
 ```
+
+
+
+
+
+
+
+
+
+
+
 
 ```{r}
 #Google mobility trends
@@ -230,6 +389,7 @@ canada_mobility_data <-
 
 canada_mobility_data
 ```
+
 ```{r}
 Residential <- canada_mobility_data %>%
          filter(category %like% 'Residential',
