@@ -283,38 +283,53 @@ plot_grid(
 ```{r}
 workplace <- canada_mobility_data %>%
          filter(category %like% 'Workplace',
-                province %like% 'Ontario|Quebec',
                 date_report >= as.Date("2020-03-12")) %>%
   dplyr::select(province, total_cumulative, date_report, trend, cases_logratio, category, baseline_comparison)
 
-workplace_mob_cumulative <-
+p1 <-
 ggplot(workplace,
        aes(x = date_report, 
-           y = total_cumulative,
-           color = cases_logratio)) +
+           y = cases_logratio,
+           color = province)) +
   geom_point() +
+  geom_smooth(method = "locfit") +
+  guides(color = F) +
   ggthemes::theme_hc() +
-  scale_y_log10() +
-  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black", limits = c(0,0.51)) +
-  labs(x = "Date", y = "Cumulative Cases") +
+  labs(x = "Date", y = "Log Ratio") +
+  theme(legend.position = "left",
+        axis.text.x = element_text(angle = 30)) +
   facet_wrap(.~province, nrow = 1) +
-  guides(color = F)
+  guides(color = F) +
+  ylim(c(0,0.51))
 
-workplace_mob_log <-
+p2 <-
 ggplot(workplace,
        aes(x = date_report, 
            y = trend,
-           color = cases_logratio)) +
+           color = province)) +
   geom_point() +
+  guides(color = F) +
   ggthemes::theme_hc() +
-  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black", limits = c(0,0.51)) +
   labs(x = "Date", y = "Workplace Mobility") +
   facet_wrap(.~province, nrow = 1) +
-  theme(legend.position = "left")
+  theme(legend.position = "left",
+        axis.text.x = element_text(angle = 30))
 
-plot_grid(workplace_mob_cumulative,
-          workplace_mob_log,
-          nrow = 2)
+p3 <-
+ggplot(workplace,
+       aes(x = date_report, 
+           y = total_cumulative,
+           color = province)) +
+  geom_point() +
+  guides(color = F) +
+  ggthemes::theme_hc() +
+  scale_y_log10() +
+  labs(x = "Date", y = "Cumulative Total") +
+  facet_wrap(.~province, nrow = 1) +
+  theme(legend.position = "left",
+        axis.text.x = element_text(angle = 30))
+
+plot_grid(p3,p1,p2, ncol = 1)
 
 workplace_log_cumulative <-
 ggplot(workplace,

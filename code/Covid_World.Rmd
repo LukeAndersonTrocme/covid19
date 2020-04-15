@@ -1,0 +1,397 @@
+---
+title: "Covid Log Ratio"
+author:
+- name: Luke Anderson-Trocmé,
+  affiliation:
+  - &cruk Department of Human Genetics, McGill University,  Montreal, Canada
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output:
+  html_notebook:
+    df_print: paged
+    code_folding: show
+    toc: yes
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+# Load Libraries and set paths
+```{r setup}
+pacman::p_load(ggplot2) # plotting functions
+pacman::p_load(cowplot) # combine plots
+pacman::p_load(ggrepel) # repel label text
+pacman::p_load(dplyr) # data wrangling
+pacman::p_load(jsonlite)
+pacman::p_load(data.table)
+pacman::p_load(tidyverse)
+pacman::p_load(tsibble) # for difference function
+pacman::p_load(lubridate)
+pacman::p_load(colorspace)
+pacman::p_load(ggthemes)
+pacman::p_load(locfit)
+
+
+#Set Path
+covidPath <- '~/Documents/covid19/data/world/'
+covidFigPath <- '~/Documents/covid19/figures/'
+
+today <- format(Sys.Date(), "%Y-%B-%d")
+```
+# Load Data
+```{r, warning = F, message = F}
+##################################################
+# covdata
+# https://github.com/kjhealy/covdata
+#remotes::install_github("kjhealy/covdata")
+##################################################
+
+library("drat")
+drat::addRepo("kjhealy")
+install.packages("covdata")
+library(tidyverse)
+library(covdata)
+
+covnat
+```
+```{r}
+## Libraries for the graphs
+library(ggrepel)
+library(paletteer)
+library(prismatic)
+
+## Convenince "Not in" operator
+"%nin%" <- function(x, y) {
+  return( !(x %in% y) )
+}
+
+## Countries to highlight
+focus_cn <- c("CHN", "DEU", "GBR", "USA", "IRN", "JPN",
+              "KOR", "ITA", "FRA", "ESP", "CHE", "TUR")
+
+## Colors
+cgroup_cols <- c(clr_darken(paletteer_d("ggsci::category20_d3"), 0.2)[1:length(focus_cn)], "gray70")
+
+covnat %>%
+  filter(cu_cases > 99) %>%
+  mutate(days_elapsed = date - min(date),
+        end_label = ifelse(date == max(date), cname, NA),
+        end_label = recode(end_label, `United States` = "USA",
+                            `Iran, Islamic Republic of` = "Iran",
+                            `Korea, Republic of` = "South Korea",
+                            `United Kingdom` = "UK"),
+         cname = recode(cname, `United States` = "USA",
+                        `Iran, Islamic Republic of` = "Iran",
+                        `Korea, Republic of` = "South Korea",
+                        `United Kingdom` = "UK"),
+         end_label = case_when(iso3 %in% focus_cn ~ end_label,
+                               TRUE ~ NA_character_), 
+         cgroup = case_when(iso3 %in% focus_cn ~ iso3, 
+                            TRUE ~ "ZZOTHER")) %>%
+  ggplot(mapping = aes(x = days_elapsed, y = cu_cases, 
+         color = cgroup, label = end_label, 
+         group = cname)) + 
+  geom_line(size = 0.5) + 
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) + 
+  guides(color = FALSE) + 
+  scale_color_manual(values = cgroup_cols) +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
+                     breaks = 2^seq(4, 19, 1),
+                     trans = "log2") + 
+  labs(x = "Days Since 100th Confirmed Case", 
+       y = "Cumulative Number of Reported Cases (log2 scale)", 
+       title = "Cumulative Reported Cases of COVID-19, Selected Countries", 
+       subtitle = paste("ECDC data as of", format(max(covnat$date), "%A, %B %e, %Y")), 
+       caption = "Kieran Healy @kjhealy / Data: https://www.ecdc.europa.eu/") +
+  theme_minimal()
+#> Don't know how to automatically pick scale for object of type difftime. Defaulting to continuous.
+#> Warning: Removed 3018 rows containing missing values (geom_text_repel).
+
+```
+
+```{r}
+us_states <- read.csv(paste0(covidPath, "states.csv"))
+
+#Google mobility trends
+mobility_data_url <- "https://raw.githubusercontent.com/nacnudus/google-location-coronavirus/master/2020-04-05-country.tsv"
+download.file(mobility_data_url, destfile = paste0(covidPath, "2020-04-05-country.tsv"), quiet = T)
+
+states <-
+  fread(paste0(covidPath, "2020-04-05-country.tsv"), sep = "\t", header = T) %>%
+  filter(country_name == "United States", type == "region") %>%
+  dplyr::select(-c(url, page, row,col, group, country_name, type, country_code)) %>%
+  mutate(date = as.Date(date)) %>%
+  inner_join( . ,
+         us_states,
+         by = "region_name") %>%
+  inner_join(. ,
+             covus %>% filter(measure == "positive"),
+             by = c("state","date")) %>%
+  filter(category == "Transit stations",
+         count > 99,
+         state %in% c("NY","NJ","MI","MA","PA")) %>%
+  arrange(date) %>%
+  group_by(state) %>%
+  mutate(days_elapsed = as.numeric(date - min(date)),
+         cases_logratio = tsibble::difference(log(count))) %>%
+  drop_na(cases_logratio)
+
+state_tests <-
+  covus %>%
+  filter(measure %in% c('positive','negative'),
+         state %in% c("NY","NJ","MI","MA","PA")) %>%
+  group_by(state, date) %>%
+  dplyr::summarise(total_tests = sum(count, na.rm = T)) %>%
+  inner_join( . ,
+              states,
+              by = c("state","date")) %>%
+  arrange(date) %>%
+  group_by(state) %>%
+  mutate(tests_logratio = tsibble::difference(log(total_tests)))
+  
+sc <-  
+  ggplot(states %>%
+           arrange(desc(date)),
+         aes(x = days_elapsed, 
+             y = count,
+             color = cases_logratio,
+             group = state)) +
+    geom_path(size = 0.5) +
+    geom_path(data = state_tests,
+              aes(x = days_elapsed,
+                  y = total_tests),
+              color = "black",
+              linetype = 2) +
+    ggthemes::theme_hc() +
+    scale_color_gradient(name="Log Ratio", low = "yellow", high = "black") +
+    scale_y_continuous(trans = "log2") +
+    labs(x = "Date", y = "Cumulative Cases") +
+  guides(color = F) +
+  facet_grid(.~state, scales = "free_x", space = "free_x")
+
+sl <-  
+  ggplot(states %>%
+           arrange(desc(date)),
+         aes(x = days_elapsed, 
+             y = cases_logratio,
+             color = cases_logratio,
+             group = state)) +
+    geom_point() +
+    geom_path(size = 0.5) +
+    geom_point(data = state_tests,
+              aes(x = days_elapsed,
+                  y = tests_logratio),
+              color = "blue",
+              linetype = 2) +
+    #geom_smooth(method = "locfit", se = F, size = 0.5) +
+    ggthemes::theme_hc() +
+    scale_color_gradient(name="Log Ratio", low = "yellow", high = "black") +
+    scale_y_continuous(trans = "log2") +
+    labs(x = "Date", y = "Log Ratio") +
+  guides(color = F) +
+  facet_grid(.~state, scales = "free_x", space = "free_x")
+
+sm<-
+  ggplot(states %>%
+           arrange(desc(date)),
+         aes(x = days_elapsed, 
+             y = trend,
+             color = cases_logratio,
+             group = state)) +
+  geom_point() +
+    geom_path(size = 0.5) +
+  ggthemes::theme_hc() +
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black") +
+  labs(x = "Date", y = "Transit station activity trends") +
+  theme(legend.position = "bottom") +
+  facet_grid(.~state, scales = "free_x", space = "free_x")
+
+plot_grid(sc,sl,sm,ncol = 1, align = "v", axis = "b", rel_heights = c(1,1,1.3))
+```
+
+
+
+```{r}
+## Countries to highlight
+focus_cn <- c("USA","KOR", "ITA", "DNK", "SGP", "SWE")
+case_countries <- c("United States", "Italy", "Sweden", "Denmark", "South Korea", "Singapore")
+
+case_study <-
+  covnat %>%
+  filter(cu_cases > 99,
+         iso3 %in% focus_cn) %>%
+  mutate(days_elapsed = as.numeric(date - min(date)),
+         end_label = ifelse(days_elapsed == max(days_elapsed), cname, NA),
+         end_label = recode(end_label, `United States` = "USA",
+                            `Korea, Republic of` = "South Korea"),
+         cname = recode(cname, `United States` = "USA",
+                        `Korea, Republic of` = "South Korea"),
+         end_label = case_when(iso3 %in% focus_cn ~ end_label,
+                               TRUE ~ NA_character_), 
+         cgroup = case_when(iso3 %in% focus_cn ~ iso3, 
+                            TRUE ~ "ZZOTHER")) %>%
+  arrange(date) %>%
+
+mobility_data <- 
+  fread(paste0(covidPath, "2020-04-05-country.tsv"), sep = "\t", header = T) %>%
+  dplyr::select(-c(url, page, row,col, group)) %>%
+  filter(type == "country") %>%
+  mutate(date = as.Date(date),
+         cname = gsub("United States", "USA", country_name)) %>%
+  filter(country_name %in% case_countries) %>%
+  inner_join( . ,
+              case_study,
+              by = c("cname","date")) %>% 
+  filter(category == "Transit stations")  %>% 
+  arrange(date) %>%
+  group_by(country_name) %>%
+  mutate(cases_logratio = tsibble::difference(log(cu_cases)))
+  
+mobility_data$country_name <- factor(mobility_data$country_name, levels = case_countries)
+
+usa_tests <-
+  covus %>%
+  filter(measure %in% c('positive','negative')) %>%
+  group_by(date) %>%
+  dplyr::summarise(total_tests_USA = sum(count, na.rm = T)) %>%
+  inner_join( . ,
+              case_study %>% filter(iso3 == "USA"),
+              by = "date")
+
+```
+
+```{r}
+cu<-
+  ggplot(mobility_data %>%
+           arrange(desc(date)),
+         aes(x = days_elapsed, 
+             y = cu_cases, 
+             color = cases_logratio, 
+             label = end_label, 
+             group = cname)) + 
+  geom_line(size = 0.5) + 
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) + 
+  guides(color = FALSE) + 
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black") +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
+                     breaks = 10^seq(1, 10, 1),
+                     trans = "log2") + 
+  xlab("Days Since 100th Confirmed Case") +
+  ylab("Cumulative Number of Reported Cases (log2 scale)")+
+  theme_minimal() +
+  facet_grid(.~country_name, scales = "free_x", space = "free_x")
+
+lr <-
+  ggplot(mobility_data %>%
+           arrange(desc(date)),
+         aes(x = days_elapsed, 
+             y = cases_logratio, 
+             color = cases_logratio, 
+             label = end_label, 
+             group = cname)) + 
+  geom_point() +
+  #geom_smooth(method = "locfit",  size = 0.5) + #se = FALSE,
+  #geom_line(size = 0.5) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) + 
+  guides(color = FALSE) + 
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black") +
+  ylab("Log Ratio")+
+  theme_minimal() +
+  theme(axis.line.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) +
+  facet_grid(.~country_name, scales = "free_x", space = "free_x")
+
+mobility <-
+  ggplot(mobility_data %>%
+           arrange(desc(date)),
+         aes(x = days_elapsed, 
+             y = trend,
+             color = cases_logratio)) +
+  geom_point() +
+  ggthemes::theme_hc() +
+  scale_color_gradient(name="Log Ratio", low = "yellow", high = "black") +
+  labs(x = "Date", y = "Transit station activity trends") +
+  facet_wrap(.~country_name, nrow = 1) +
+  facet_grid(.~country_name, scales = "free_x", space = "free_x")
+
+plot_grid(cu,lr,mobility,ncol=1, rel_heights = c(1,1,1.2), align = "v", axis = "b")
+
+ggsave(paste0(covidFigPath, "log_ratio_world.jpg"), height = 11, width = 8)
+```
+#by state
+```{r}
+covus
+
+## Which n states are leading the count of positive cases or deaths?
+top_n_states <- function(data, n = 5, measure = c("positive", "death")) {
+  meas <- match.arg(measure)
+  data %>%
+  group_by(state) %>%
+  filter(measure == meas, date == max(date)) %>%
+  drop_na() %>%
+  ungroup() %>%
+  top_n(n, wt = count) %>%
+  pull(state)
+}
+
+state_cols <- c("gray70", 
+                prismatic::clr_darken(paletteer_d("ggsci::category20_d3"), 0.2))
+
+covus %>%
+  group_by(state) %>%
+  mutate(core = case_when(state %nin% top_n_states(covus) ~ "",
+                          TRUE ~ state),
+         end_label = ifelse(date == max(date), core, NA)) %>%
+  arrange(date) %>%
+  filter(measure == "positive", date > "2020-03-09") %>%
+  ggplot(aes(x = date, y = count, group = state, color = core, label = end_label)) + 
+  geom_line(size = 0.5) + 
+  geom_text_repel(segment.color = NA, nudge_x = 0.2, nudge_y = 0.1) + 
+  scale_color_manual(values = state_cols) + 
+  scale_x_date(date_breaks = "3 days", date_labels = "%b %e" ) + 
+  scale_y_continuous(trans = "log2",
+                     labels = scales::comma_format(accuracy = 1),
+                     breaks = 2^c(seq(1, 17, 1))) +
+  guides(color = FALSE) + 
+  coord_equal() + 
+  labs(title = "COVID-19 Cumulative Recorded Cases by US State",
+       subtitle = paste("Data as of", format(max(covus$date), "%A, %B %e, %Y")),
+       x = "Date", y = "Count of Cases (log 2 scale)", 
+       caption = "Data: COVID Tracking Project, http://covidtracking.com | Graph: @kjhealy") + 
+  theme_minimal()
+```
+
+```{r}
+covus %>%
+  arrange(date) %>%
+  filter(measure == "positive",
+         date > "2020-03-09") %>%
+  #mutate(days_elapsed = date - min(date)) %>%
+  dplyr::select(date, state, count) %>%
+  arrange(date) %>%
+  group_by(state) %>%
+  mutate(cases_logratio = tsibble::difference(log(count))) %>%
+  drop_na() %>%
+  ggplot(. , aes(x = date, 
+           y = cases_logratio,
+           color = state, 
+           group = state)) +
+  geom_point() +
+  geom_smooth(method = "locfit") +
+  ggthemes::theme_hc() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  colorspace::scale_fill_discrete_qualitative() +
+  colorspace::scale_color_discrete_qualitative() +
+  guides(color = F) +
+  xlab("Date") +
+  ylab("Log Ratio") +
+  facet_wrap(.~state, ncol = 10) +
+  ylim(c(0,1))
+```  
