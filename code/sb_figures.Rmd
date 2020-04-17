@@ -246,7 +246,7 @@ p1_loge <- DT %>%
 
 
 p1_log2 <- DT %>% 
-  filter(cu_cases > 99) %>% 
+  filter(cu_cases > 99, province %in% c("Quebec","Ontario")) %>% 
   mutate(days_elapsed = Date - min(Date),
          end_label = ifelse(Date == max(Date), province, NA),
          cgroup = case_when(province %in% focus_cn ~ province,
@@ -264,19 +264,48 @@ p1_log2 <- DT %>%
                      breaks = 2^seq(4, 19, 1),
                      trans = "log2") +
   labs(x = "Days Since 100th Confirmed Case",
-       y = "Cumulative Number of Reported Cases (log base 2 scale)",
+       y = "Cumulative Number of Reported Cases\n (log2 scale)",
        title = "Cumulative Reported Cases of COVID-19, Selected Provinces",
        subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
-       caption = "Sahir Bhatnagar @syfi_24 / Data: https://github.com/ishaberry/Covid19Canada") +
+       caption = "source: https://github.com/ishaberry/Covid19Canada") +
   theme_minimal()
 
+p1_log2
 cowplot::plot_grid(p1_original, p1_log10, p1_log2, p1_loge)
 
 ```
 
 
+## Cumulative Cases on log2 scale for Quebec and Ontario
 
 ```{r}
+
+p1_log2 <- DT %>% 
+  filter(cu_cases > 99, province %in% c("Quebec","Ontario")) %>% 
+  mutate(days_elapsed = Date - min(Date),
+         end_label = ifelse(Date == max(Date), province, NA),
+         cgroup = case_when(province %in% focus_cn ~ province,
+                            TRUE ~ "ZZOTHER")
+  ) %>% 
+  ggplot(mapping = aes(x = days_elapsed, y = cu_cases,
+                       color = cgroup, label = end_label,
+                       group = province)) +
+  geom_line(size = 0.5) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) +
+  guides(color = FALSE) +
+  scale_color_manual(values = cgroup_cols) +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1),
+                     breaks = 2^seq(4, 19, 1),
+                     trans = "log2") +
+  labs(x = "Days Since 100th Confirmed Case",
+       y = "Cumulative Number of Reported Cases\n (log2 scale)",
+       title = "Cumulative Reported Cases of COVID-19, Selected Provinces",
+       subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
+       caption = "source: https://github.com/ishaberry/Covid19Canada") +
+  theme_minimal()
+
+
 tt <- DT %>% 
   filter(cu_cases > 99, province == "Quebec") %>% 
   mutate(days_elapsed = Date - min(Date),
@@ -314,12 +343,12 @@ p1_log2_qc <- DT %>%
   geom_text_repel(nudge_x = 0.75,
                   segment.color = NA) +
   guides(color = FALSE) +
-  scale_color_manual(values = cgroup_cols) +
+  scale_color_manual(values = cgroup_cols[2]) +
   labs(x = "Days Since 100th Confirmed Case",
-       y = "Cumulative Number of Reported Cases (log base 2 scale)",
+       y = "Cumulative Number of Reported Cases\n (log2 scale)",
        title = "Cumulative Reported Cases of COVID-19, Quebec",
-       subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
-       caption = "Sahir Bhatnagar @syfi_24 / Data: https://github.com/ishaberry/Covid19Canada") +
+       # subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
+       caption = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y"))) +
   theme_minimal_grid(color = "grey30") +
   theme(panel.grid.major.x = element_line(linetype="dashed"), 
         panel.grid.major.y = element_line(linetype="dashed"))+
@@ -328,14 +357,9 @@ p1_log2_qc <- DT %>%
   scale_y_continuous(labels = scales::comma_format(accuracy = 1),
                      breaks = 2^seq(4, 19, 1),
                      trans = "log2")
-```
 
-
-
-```{r}
-
-# Intersection points
-
+ggplot_build(p1_log2_qc)$layout$panel_params[[1]]$x.range
+ggplot_build(p1_log2_qc)$layout$panel_params[[1]]$y.range
 
 p1_log2_on <- DT %>% 
   filter(cu_cases > 99, province == "Ontario") %>% 
@@ -351,12 +375,12 @@ p1_log2_on <- DT %>%
   geom_text_repel(nudge_x = 0.75,
                   segment.color = NA) +
   guides(color = FALSE) +
-  scale_color_manual(values = cgroup_cols[2]) +
+  scale_color_manual(values = cgroup_cols[1]) +
   labs(x = "Days Since 100th Confirmed Case",
-       y = "Cumulative Number of Reported Cases (log base 2 scale)",
+       y = "",
        title = "Cumulative Reported Cases of COVID-19, Ontario",
-       subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
-       caption = "Sahir Bhatnagar @syfi_24 / Data: https://github.com/ishaberry/Covid19Canada") +
+       # subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
+       caption = "source: https://github.com/ishaberry/Covid19Canada") +
   theme_minimal_grid(color = "grey30") +
   theme(panel.grid.major.x = element_line(linetype="dashed"), 
         panel.grid.major.y = element_line(linetype="dashed"))+
@@ -364,16 +388,73 @@ p1_log2_on <- DT %>%
                      labels = scales::label_number(accuracy = 1))+
   scale_y_continuous(labels = scales::comma_format(accuracy = 1),
                      breaks = 2^seq(4, 19, 1),
-                     trans = "log2") 
+                     trans = "log2")#,
+                     # limits = range(c(1,2^seq(4, 14, 1))))
+
+# d_times <- c(unique(intersects_qc)[-length(unique(intersects_qc))],
+#   unique(intersects_on)[-length(unique(intersects_on))])
+# 
+# d_times <- d_times[order(d_times)]
+# d_times %>% scales::label_nu
+
+
+p1_LR_on_qc <- DT %>% 
+  filter(cu_cases > 99, province %in% focus_cn) %>% 
+  mutate(days_elapsed = Date - min(Date),
+         end_label = ifelse(Date == max(Date), province, NA),
+         cgroup = case_when(province %in% focus_cn ~ province,
+                            TRUE ~ "ZZOTHER")
+  ) %>% 
+  ggplot(mapping = aes(x = days_elapsed, y = log(2)/lr_cases,
+         color = cgroup, label = end_label,
+         group = province)) +
+  geom_point() +
+  geom_smooth(method = "locfit", se = F) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA) +
+  guides(color = FALSE) +
+  scale_color_manual(values = cgroup_cols) +
+  theme_minimal_grid(color = "grey30") +
+  theme(panel.grid.major.x = element_line(linetype="dashed"), 
+        panel.grid.major.y = element_line(linetype="dashed")) +
+  # scale_x_continuous(breaks = unique(intersects_on)[-length(unique(intersects_on))],
+  #                    labels = scales::label_number(accuracy = 1))+
+ scale_y_continuous(
+   "Doubling time (days)",
+   # trans = my_scale_double
+    # breaks = log(1+seq(0,60,by=10)/100),
+    # labels = paste0(seq(0,60,by=10),"%")
+    # minor_breaks=NULL,
+    # sec.axis = sec_axis(~ log(2)/(.),
+      # breaks = c(2:7,14,21),
+      # name = "Doubling time (days)")
+  ) +
+  labs(x = "Days Since 100th Confirmed Case",
+       y = "Percent change in Number of Cases",
+       title = "Cumulative Reported Cases of COVID-19, Selected Provinces",
+       subtitle = paste("Data as of", format(max(DT$Date), "%A, %B %e, %Y")),
+       caption = "source: https://github.com/ishaberry/Covid19Canada") +
+  theme_minimal()
 
 
 
-cowplot::plot_grid(p1_log2_qc, p1_log2_on)
 
+# p1_log2_on
+# p1_log2_qc
+middle <- plot_grid(p1_log2_qc, p1_log2_on, labels = c('B','C'), label_size = 12)
 
-
-
+pdf(file = "on_qc.pdf", width = 15, height = 16)
+plot_grid(p1_log2, 
+          middle, 
+          p1_LR_on_qc,
+          labels = c('A','','D'), label_size = 12, ncol = 1)
+dev.off()
+# pacman::p_load(patchwork)
+# p1_log2 +
+#   p1_log2_qc + p1_log2_on
+# patchwork::plot_layout()
 ```
+
 
 
 
