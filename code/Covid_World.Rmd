@@ -141,11 +141,6 @@ state_cols <- c("gray70",
 cgroup_cols <- c(clr_darken(paletteer_d("ggsci::category20_d3"), 0.2)[1:top], "gray70")
 
 states <-
-  states %>%
-  ungroup() %>%
-  mutate(state = as.factor(state))
-
-states <-
   fread(paste0(covidPath, "2020-04-05-country.tsv"), sep = "\t", header = T) %>%
   filter(country_name == "United States", 
          type == "region",
@@ -406,17 +401,34 @@ mobility_data <-
               lockdown,
               by = "country_name") %>%
   arrange(date) %>%
-  group_by(country_name) %>%
+  group_by(country_name)%>% 
   mutate(cases_logratio = tsibble::difference(log(cu_cases)),
          doubling_time = log(2) / cases_logratio,
          from_shutdown = as.numeric(difftime(date, shutdown_date, units = "days")),
          end_label = ifelse(from_shutdown == max(from_shutdown), country_name, NA),
-         days_elapsed = as.numeric(date - min(date))) %>%
-  filter(from_shutdown > -31,
+         days_elapsed = as.numeric(date - min(date)),) %>%
+  filter(from_shutdown > -31, #keep only a range of days from shutown
          from_shutdown < 41) %>%
-  dplyr::select(country_name, date, from_shutdown, days_elapsed, cases_logratio,doubling_time, cu_cases, cu_deaths, trend, first_case, end_label)
+  dplyr::select(country_name, date, from_shutdown, days_elapsed, cases_logratio,doubling_time, cu_cases, cu_deaths, trend,intersects, first_case, end_label)
   
+mobility_data
+
 mobility_data$country_name <- reorder(mobility_data$country_name, -mobility_data$cu_cases)#factor(mobility_data$country_name, levels = case_countries)
+
+doubling_moments <-
+  mobility_data %>%
+  group_by(country_name) %>%
+  mutate(n = n(), #get number of days
+         intersects = sapply(seq(1,max(n),1), function(kk) #get moments of doubling
+           optimize(function(t0) abs(approxfun(from_shutdown, log2(cu_cases))(t0) - kk),
+                    interval = range(from_shutdown))$minimum),
+         doubling_day = T,
+         from_shutdown = round(intersects)) %>%
+  dplyr::select(country_name, from_shutdown,doubling_day) %>%
+  unique() %>%
+  right_join(.,
+             mobility_data,
+             by = c("country_name","from_shutdown"))
 
 usa_tests <-
   covus %>%
@@ -427,31 +439,8 @@ usa_tests <-
               case_study %>% filter(iso3 == "USA"),
               by = "date")
 
-```
 
-```{r}
-tt <- DT %>% 
-  filter(cu_cases > 99, province == "Quebec") %>% 
-  mutate(days_elapsed = Date - min(Date),
-         end_label = ifelse(Date == max(Date), province, NA),
-         cgroup = case_when(province %in% focus_cn ~ province,
-                            TRUE ~ "ZZOTHER")
-  )
-
-f1 <- approxfun(tt$days_elapsed, log2(tt$cu_cases))
-intersects_qc <- sapply(seq(4,19,1), function(kk) optimize(function(t0) abs(f1(t0) - kk), interval = range(tt$days_elapsed))$minimum)
-
-tt_on <- DT %>% 
-  filter(cu_cases > 99, province == "Ontario") %>% 
-  mutate(days_elapsed = Date - min(Date),
-         end_label = ifelse(Date == max(Date), province, NA),
-         cgroup = case_when(province %in% focus_cn ~ province,
-                            TRUE ~ "ZZOTHER")
-  )
-
-f1_on <- approxfun(tt_on$days_elapsed, log2(tt_on$cu_cases))
-intersects_on <- sapply(seq(4,19,1), function(kk) optimize(function(t0) abs(f1_on(t0) - kk), interval = range(tt_on$days_elapsed))$minimum)
-
+ggplot(mobility_data, aes(x = intersects, y = cu_cases))+geom_point() + facet_wrap(.~country_name)
 ```
 
 
@@ -464,20 +453,42 @@ cu<-
              color = doubling_time, 
              label = end_label, 
              group = country_name)) + 
-  geom_vline(xintercept = 0) +
+  geom_segment(data = doubling_moments %>% filter(doubling_day == T),
+               mapping = aes(x = from_shutdown,
+                             xend = from_shutdown,
+                             y = cu_cases,
+                             yend = 0),
+               color = "black",
+               alpha = 0.5,
+               size = 0.5) +
+  geom_point(data = mobility_data %>% filter(cu_deaths > 100),
+             aes(y = cu_deaths),
+             color = "black",
+             size = 0.5) +
+  geom_text(data = doubling_moments %>% filter(doubling_day == T),
+            mapping = aes(x = from_shutdown,
+                          y = cu_cases,
+                          label = round(doubling_time)),
+            color = "black",
+            size = 2,
+            nudge_y = log2(2)) +
+  geom_vline(xintercept = 0, linetype = 2) +
   geom_line(size = 1.5) + 
   geom_point(size = 1) + 
   guides(color = FALSE) + 
   scale_color_gradient(low = "tomato3", high = "yellow2", limits = c(0,27)) +
   scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
-                     breaks = 10^seq(1, 10, 1),
+                     breaks = 2^seq(0, 15, 1) * 100,
                      trans = "log2") + 
   ylab("Cumulative Number of Reported Cases (log2 scale)")+
   theme_minimal() +
   theme(axis.line.x = element_blank(),
         axis.text.x = element_blank(),
         axis.ticks.x = element_blank(),
-        axis.title.x = element_blank()) +
+        axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank()) +
   facet_grid(.~country_name, scales = "free_x", space = "free_x")
 
 lr <-
@@ -488,7 +499,7 @@ lr <-
              color = doubling_time, 
              label = end_label, 
              group = country_name)) + 
-  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = 0, linetype = 2) +
   geom_point() +
   #geom_smooth(method = "locfit",  size = 0.5) + #se = FALSE,
   #geom_line(size = 0.5) +
@@ -509,7 +520,7 @@ mobility <-
          aes(x = from_shutdown, 
              y = trend,
              color = doubling_time)) +
-  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = 0, linetype = 2) +
   geom_point() +
   scale_color_gradient(low = "tomato3", high = "yellow2", limits = c(0,27)) +
   labs(x = "Days since lockdown", y = "Residential activity trends") +
