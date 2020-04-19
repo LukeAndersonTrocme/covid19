@@ -56,7 +56,7 @@ library(prismatic)
 covnat
 
 ##Stringency index
-https://ocgptweb.azurewebsites.net/CSVDownload
+#https://ocgptweb.azurewebsites.net/CSVDownload
 ```
 
 ```{r}
@@ -125,8 +125,8 @@ states <-
   #dplyr::select(state, date, from_shutdown, days_elapsed, cases_logratio,doubling_time, count, deaths, trend, end_label)
   
 #states$state <- reorder(states$state, states$count)
-states$state <- factor(states$state, levels = unique(states[order(states$region),]$state), ordered = TRUE)
-
+states$division <- factor(states$division, levels = unique(states[order(states$region),]$division), ordered = TRUE)
+states$state <- factor(states$state, levels = unique(states[order(states$division),]$state), ordered = TRUE)
 
 state_tests <-
   covus %>%
@@ -162,24 +162,24 @@ cu<-
   #           size = 0.5, linetype =2,
   #           color = "black") +
   geom_line(size = 1.5) + 
-  geom_point(size = 1) + 
   guides(color = FALSE) + 
   #scale_color_gradient(low = "tomato3", high = "yellow2") +
-  scale_color_discrete_sequential() +
+  scale_color_discrete_divergingx(palette = "Earth") +
   scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
                      breaks = 2^seq(-2, 15, 1) * 100,
                      trans = "log2") + 
+  scale_x_continuous(breaks = seq(0, 28, 7)) +
   ylab("Cumulative Number of Cases (log2 scale)")+
   theme_minimal() +
   theme(axis.line.x = element_blank(),
         axis.text.x = element_blank(),
         axis.ticks.x = element_blank(),
         axis.title.x = element_blank(),
-        panel.grid.major.x = element_blank(),
+        #panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA")) +
-  facet_grid(.~region, scales = "free_x", space = "free_x")
+  facet_grid(.~division, scales = "free_x", space = "free_x")
 
 lr <-
 ggplot(states %>%
@@ -190,18 +190,19 @@ ggplot(states %>%
              label = end_label, 
              group = state)) + 
   geom_text_repel(nudge_x = 0.75,
-                  segment.color = NA,
+                  #segment.color = NA,
                   fontface = "bold") +
   #geom_vline(data = prov %>% filter(from_shutdown == 0),
   #           aes(xintercept = days_elapsed),
   #           size = 0.5, linetype =2,
   #           color = "black") +
   geom_point() +
-  geom_smooth(method = "locfit",  size = 0.5, color = "black") + #se = FALSE,
+  geom_smooth(method = "locfit", se = FALSE,  size = 0.5, aes(color = state)) + #
   #geom_line(size = 0.5) +
   guides(color = FALSE) + 
   #scale_color_gradient(low = "tomato3", high = "yellow2") +
-  scale_color_discrete_sequential() +
+  scale_color_discrete_divergingx(palette = "Earth") +
+  scale_x_continuous(breaks = seq(0, 28, 7)) +
   ylab("Doubling Time")+
   theme_minimal() +
   theme(axis.line.x = element_blank(),
@@ -209,7 +210,8 @@ ggplot(states %>%
         axis.ticks.x = element_blank(),
         axis.title.x = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA")) +
-  facet_grid(.~region, scales = "free_x", space = "free_x")
+  facet_grid(.~division, scales = "free_x", space = "free_x") +
+  ylim(c(0,24))
 
 mobility <-
 ggplot(states %>%
@@ -220,25 +222,28 @@ ggplot(states %>%
              group = state,
              label = end_label)) +
   geom_text_repel(nudge_x = 0.75,
-                  segment.color = NA,
+                  #segment.color = NA,
                   fontface = "bold") +
   #geom_vline(data = prov %>% filter(from_shutdown == 0),
   #           aes(xintercept = days_elapsed),
   #           size = 0.5, linetype =2,
   #           color = "black") +
   geom_point() +
-  geom_smooth(method = "locfit",  size = 0.5, color = "black") +
+  geom_smooth(method = "locfit", se = FALSE, size = 0.5, aes(color = state)) +
   #scale_color_gradient(low = "tomato3", high = "yellow2", breaks = c(2,7,14,21)) +
-  scale_color_discrete_sequential() +
+  scale_color_discrete_divergingx(palette = "Earth") +
+  scale_x_continuous(breaks = seq(0, 28, 7),
+                     labels = paste("week", seq(1,5,1))) +
+  guides(color = F) +
   labs(x = "Days Since 10th Confirmed Case", y = "Residential activity trends") +
   theme_minimal() +
   theme(legend.position = "bottom",
         panel.border = element_rect(color = "black", fill = "NA")) +
-  facet_grid(.~region, scales = "free_x", space = "free_x")
+  facet_grid(.~division, scales = "free_x", space = "free_x")
 
-plot_grid(cu,lr,mobility,ncol=1, rel_heights = c(1,1,1.2), align = "v", axis = "b")
+plot_grid(cu,lr,mobility,ncol=1, rel_heights = c(1,1,1), align = "v", axis = "b")
 
-ggsave(paste0(covidFigPath, "log_ratio_us_regions.jpg"), height = 8, width = 11)
+ggsave(paste0(covidFigPath, "log_ratio_us_division.jpg"), height = 12, width = 18)
 ```
 
 ```{r}
