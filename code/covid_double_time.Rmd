@@ -253,79 +253,83 @@ ggsave(paste0(covidFigPath, "log_ratio_us_division.jpg"), height = 12, width = 1
 
 ```{r}
 ## Countries to highlight
-focus_cn <- c("USA", "KOR", "ITA", "DNK", "SGP", "SWE")
 case_countries <- c("United States","Italy", "Sweden", "Denmark", "South Korea", "Singapore")
 #focus_cn <- c("USA","KOR", "ITA", "DNK", "SGP", "SWE", "GBR", "ESP", "FRA", "CAN", "JPN", "NOR","AUT", "AUS")
 #case_countries <- c("United States", "Italy", "United Kingdom", "Spain", "France","Canada", "Sweden", "Denmark", "South Korea", "Singapore", "Japan", "Norway","Austria","Australia")
 lockdown <- read.csv(paste0(covidPath,"lockdown.csv"), colClasses = c("character","Date","Date"))
+testing <- read.csv(paste0(covidPath,"owid-covid-data.csv")) %>%
+  mutate(date = as.Date(date),
+         country_region = location)
 
 case_study <-
   covnat %>%
-  filter(iso3 %in% focus_cn,
-         cu_cases > 50) %>%
-  mutate(country_region = recode(cname, `Korea, Republic of` = "South Korea")) %>%
-  arrange(date)
+  filter(cu_cases > 50) %>%
+  mutate(country_region = recode(cname, `Korea, Republic of` = "South Korea"))
 
 mobility_data <- 
   fread(paste0(covidPath, "Global_Mobility_Report.csv"), sep = ",", header = T) %>%
   filter(sub_region_1 == "",
          sub_region_2 == "")  %>% 
   mutate(date = as.Date(date)) %>%
-  filter(country_region %in% case_countries) %>%
   right_join( . ,
               case_study,
               by = c("country_region","date")) %>% 
   inner_join( . ,
+              testing,
+              by = c("country_region","date")) %>%
+  inner_join( . ,
               lockdown,
               by = "country_region") %>%
+  filter(country_region %in% case_countries) %>%
   arrange(date) %>%
   group_by(country_region)%>% 
   mutate(cases_logratio = tsibble::difference(log(cu_cases)),
          doubling_time = log(2) / cases_logratio,
          from_shutdown = as.numeric(difftime(date, shutdown_date, units = "days")),
          end_label = ifelse(from_shutdown == max(from_shutdown), country_region, NA),
-         days_elapsed = as.numeric(date - min(date)),) %>%
-  filter(from_shutdown > -31, #keep only a range of days from shutown
-         from_shutdown < 41)# %>%
+         days_elapsed = as.numeric(date - min(date))) #%>%
+  #filter(from_shutdown > -31)# %>%
   #dplyr::select(country_region, date, from_shutdown, days_elapsed, cases_logratio,doubling_time, cu_cases, cu_deaths, trend,intersects, first_case, end_label)
   
 mobility_data
 
 mobility_data$country_region <- reorder(mobility_data$country_region, -mobility_data$cu_cases)#factor(mobility_data$country_region, levels = case_countries)
 
-doubling_moments <-
-  mobility_data %>%
-  group_by(country_region) %>%
-  mutate(n = n(), #get number of days
-         intersects = sapply(seq(1,max(n),1), function(kk) #get moments of doubling
-           optimize(function(t0) abs(approxfun(from_shutdown, log2(cu_cases))(t0) - kk),
-                    interval = range(from_shutdown))$minimum),
-         doubling_day = T,
-         from_shutdown = round(intersects)) %>%
-  dplyr::select(country_region, from_shutdown,doubling_day, intersects) %>%
-  unique() %>%
-  right_join(.,
-             mobility_data,
-             by = c("country_region","from_shutdown")) %>%
-  filter(doubling_day == T) %>%
-  arrange(country_region, date) %>%
-  mutate(lag_from_shutdown = lag(from_shutdown),
-         lag_days_elapsed = lag(days_elapsed),
-         lag_cu_cases = lag(cu_cases),
-         lag_doubling_time = lag(doubling_time),
-         double_day = round(intersects - lag(intersects)),
-         lag_date = lag(date))
+doubled_counts = 2^seq(1, 15, 1) * 100
+double_times <- data.frame()
+for (country in unique(mobility_data$country_region)) {
   
+  df <-  mobility_data %>% filter(country_region == country)
+  
+  double_time <- 
+    as.data.frame(
+      as.Date(sapply(doubled_counts, 
+             function(kk) #get moments of doubling
+               optimize(function(t0) 
+                 abs(approxfun(df$date, df$cu_cases)(t0) - kk),
+                 interval = range(df$date))$minimum), 
+      origin = "1970-01-01"))
+  names(double_time) <- "doubling_time"
 
-usa_tests <-
-  covus %>%
-  filter(measure %in% c('positive','negative')) %>%
-  group_by(date) %>%
-  dplyr::summarise(total_tests_USA = sum(count, na.rm = T)) %>%
-  inner_join( . ,
-              case_study %>% filter(iso3 == "USA"),
-              by = "date")
+  double_times <-
+    double_time %>%
+    mutate(country_region = paste(country),
+           cu_cases = doubled_counts,
+           lag_cu_cases = lag(cu_cases),
+           lag_doubling_time = lag(doubling_time),
+           time = round(doubling_time - lag_doubling_time)) %>%
+    distinct(doubling_time, .keep_all = TRUE) %>%
+    filter(cu_cases <= max(df$cu_cases)) %>%
+    rbind(double_times, .)
+  
+}
+
+double_times
+
+double_times$country_region <- reorder(double_times$country_region, -double_times$cu_cases)
+
 ```
+
 
 
 ```{r}
@@ -340,25 +344,29 @@ reverselog_trans <- function(base = exp(1)) {
               domain = c(1e-100, Inf))
 }
 
-
 cu<-
   ggplot(mobility_data %>%
            arrange(desc(date)),
-         aes(x = days_elapsed, 
+         aes(x = date, 
              y = cu_cases, 
-             color = doubling_time, 
-             label = end_label, 
+             #color = doubling_time, 
              group = country_region)) + 
-  geom_segment(data = doubling_moments %>% filter(doubling_day == T),
-               mapping = aes(x = lag_days_elapsed,
-                             xend = days_elapsed,
+  geom_vline(data = double_times,
+             aes(xintercept = doubling_time,
+                 group = country_region), linetype = 1, color = "grey80") +
+  geom_vline(data = mobility_data %>% filter(from_shutdown == 0),
+             aes(xintercept = days_elapsed,
+                 group = country_region), linetype = 2) +
+  geom_segment(data = double_times,
+               mapping = aes(x = lag_doubling_time,
+                             xend = doubling_time,
                              y = cu_cases,
                              yend = cu_cases),
                color = "black",
                size = 0.5) +
-    geom_segment(data = doubling_moments %>% filter(doubling_day == T),
-               mapping = aes(x = lag_days_elapsed,
-                             xend = lag_days_elapsed,
+  geom_segment(data = double_times,
+               mapping = aes(x = lag_doubling_time,
+                             xend = lag_doubling_time,
                              y = lag_cu_cases,
                              yend = cu_cases),
                color = "black",
@@ -368,14 +376,14 @@ cu<-
                  group = country_region), linetype = 2) +
   geom_line(size = 1) + 
   geom_line(data = mobility_data %>% filter(cu_deaths > 100),
-             aes(y = cu_deaths),
-             color = "black",
-             size = 0.5) +
-  geom_text(data = doubling_moments %>% filter(doubling_day == T),
-            mapping = aes(x = days_elapsed + 5,
-                          y = cu_cases / 2,
-                          label = paste(double_day,"days")),
+            aes(y = cu_deaths),
             color = "black",
+            size = 0.5) +
+  geom_text(data = double_times,
+            mapping = aes(x = doubling_time + 5,
+                          y = cu_cases / 2,
+                          label = paste(round(time),"days")),
+            color = "grey60",
             fontface = "bold",
             size = 2,
             nudge_y = log2(2)) +
@@ -385,15 +393,15 @@ cu<-
   scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
                      breaks = 2^seq(1, 15, 1) * 100,
                      trans = "log2",
-                     limits = c(99, 1200000)) + 
+                     limits = c(99, 1200000)) +
   ylab("Cumulative Cases\n(log2 scale)")+
   theme_minimal() +
-  theme(axis.line.x = element_blank(),
-        axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
+  theme(#axis.line.x = element_blank(),
+        #axis.text.x = element_blank(),
+        #axis.ticks.x = element_blank(),
         axis.title.x = element_blank(),
-        panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA")) +
   facet_grid(.~country_region, scales = "free_x", space = "free_x")
@@ -402,43 +410,47 @@ lr <-
   ggplot(mobility_data %>%
            arrange(desc(date)) %>%
            filter(doubling_time != Inf),
-         aes(x = days_elapsed, 
+         aes(x = date, 
              y = doubling_time, 
-             color = doubling_time, 
+             #color = doubling_time, 
              label = end_label, 
              group = country_region)) + 
+  geom_vline(data = double_times,
+             aes(xintercept = doubling_time,
+                 group = country_region), linetype = 1, color = "grey80") +
   geom_vline(data = mobility_data %>% filter(from_shutdown == 0),
              aes(xintercept = days_elapsed,
                  group = country_region), linetype = 2) +
-  geom_segment(data = doubling_moments %>% filter(doubling_day == T),
-               mapping = aes(x = lag_days_elapsed,
-                             xend = days_elapsed,
-                             y = doubling_time,
-                             yend = doubling_time),
-               color = "black",
-               size = 0.5) +
-    geom_segment(data = doubling_moments %>% filter(doubling_day == T),
-               mapping = aes(x = lag_days_elapsed,
-                             xend = lag_days_elapsed,
-                             y = lag_doubling_time,
-                             yend = doubling_time),
-               color = "black",
-               size = 0.5) +
+  #geom_segment(data = doubling_moments %>% filter(doubling_day == T),
+  #             mapping = aes(x = days_elapsed,
+  #                           xend = days_elapsed,
+  #                           y = doubling_time + (doubling_time * 0.2),
+  #                           yend = doubling_time - (doubling_time * 0.2)),
+  #             color = "black",
+  #            size = 0.5) +
   geom_point(size = 0.5) +
   geom_smooth(method = "locfit", se = FALSE, color = "black", size = 0.5) + 
+#  geom_text(data = doubling_moments %>% filter(doubling_day == T),
+#            mapping = aes(x = days_elapsed + 1,
+#                          y = doubling_time,
+#                          label = double_day),
+#            color = "grey60",
+#            fontface = "bold",
+#            size = 2) +
   #geom_line(size = 0.5) +
   guides(color = FALSE) + 
   scale_color_gradient(low = "tomato3", high = "yellow2", trans = "log2") +
   scale_y_continuous(trans = reverselog_trans(2), 
-                     breaks = c(2,4, 7,14,28, 56),
-                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months")) +
+                     breaks = c(2,4, 7,14,28, 56, 112),
+                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months")) +
   ylab("Doubling Time\n(log2 scale)")+
   theme_minimal() +
-  theme(axis.line.x = element_blank(),
-        axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
+  theme(#axis.line.x = element_blank(),
+        #axis.text.x = element_blank(),
+        #axis.ticks.x = element_blank(),
         axis.title.x = element_blank(),
         panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA")) +
   facet_grid(.~country_region, scales = "free_x", space = "free_x")
@@ -446,9 +458,13 @@ lr <-
 mobility <-
   ggplot(mobility_data %>%
            arrange(desc(date)),
-         aes(x = days_elapsed, 
+         aes(x = date, 
              y = residential_percent_change_from_baseline,
-             color = doubling_time)) +
+             #color = doubling_time,
+             group = country_region)) +
+  geom_vline(data = double_times,
+             aes(xintercept = doubling_time,
+                 group = country_region), linetype = 1, color = "grey80") +
   geom_vline(data = mobility_data %>% filter(from_shutdown == 0),
              aes(xintercept = days_elapsed,
                  group = country_region), linetype = 2) +
@@ -459,6 +475,7 @@ mobility <-
   theme_minimal() +
   theme(legend.position = "bottom",
         panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA")) +
   facet_grid(.~country_region, scales = "free_x", space = "free_x")
@@ -467,6 +484,56 @@ plot_grid(cu,lr,mobility,ncol=1, rel_heights = c(1,1,1.2), align = "v", axis = "
 
 ggsave(paste0(covidFigPath, "doubling_time_select6.jpg"), height = 8, width = 12)
 ```
+
+```{r}
+cov_cases <-
+  covnat %>%
+  filter(cu_cases > 50) %>%
+  mutate(country_region = recode(cname, `Korea, Republic of` = "South Korea")) %>%
+  arrange(date)
+
+
+fread(paste0(covidPath, "Global_Mobility_Report.csv"), sep = ",", header = T) %>%
+  filter(sub_region_1 == "",
+         sub_region_2 == "")  %>% 
+  mutate(date = as.Date(date)) %>%
+  right_join( . ,
+              case_study,
+              by = c("country_region","date")) %>% 
+  inner_join( . ,
+              testing,
+              by = c("country_region","date")) %>%
+  group_by(country_region) %>%
+  arrange(date) %>%
+  mutate(cases_logratio = tsibble::difference(log(cu_cases)),
+         doubling_time = log(2) / cases_logratio,
+         lag_doubling_time = lag(doubling_time),
+         days_elapsed = as.numeric(date - min(date)),
+         end_label = ifelse(days_elapsed == max(days_elapsed), country_region, NA)) %>%
+  arrange(days_elapsed) %>%
+  filter(!is.na(doubling_time),
+         !doubling_time == Inf,
+         !is.na(lag_doubling_time),
+         !lag_doubling_time == Inf,
+         doubling_time >= 14 & lag_doubling_time >= 14,
+         cu_cases > 1000) %>%
+  top_n(-1, wt = days_elapsed) %>%
+  dplyr::select(country_region, date,days_elapsed, doubling_time, lag_doubling_time, cu_cases, cu_deaths, total_tests_per_thousand) %>%
+    ggplot(aes(x = days_elapsed,
+               y = cu_deaths,
+               label = country_region,
+               size = total_tests_per_thousand)) +
+    geom_point(alpha = 0.3) +
+  labs(x = "time to reach two week doubling time",
+       y = "cumulative deaths") +
+    scale_size_area(max_size = 14) +
+    scale_y_continuous(trans = "log2") +
+    geom_text_repel(size = 3)
+
+ggsave(paste0(covidFigPath, "time_to.jpg"), height = 8, width = 12)
+
+```
+
 
 ##Provinces
 

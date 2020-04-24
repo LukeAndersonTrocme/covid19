@@ -48,7 +48,7 @@ ON <- canada[canada$NAME_1 %in% "Ontario",]
 # Load data
 covid_on <- 
   read.csv(paste0(covidPath, "conposcovidloc.csv")) %>%
-  mutate(ACCURATE_EPISODE_DATE = as.Date(ACCURATE_EPISODE_DATE))
+  mutate(Accurate_Episode_Date = as.Date(Accurate_Episode_Date))
 
 #header of the data
 covid_on
@@ -59,7 +59,7 @@ loc_covid_on <-
   group_by(Reporting_PHU_Latitude, Reporting_PHU_Longitude,Reporting_PHU_City) %>%
   dplyr::summarise(count = n()) %>%
   arrange(-count, Reporting_PHU_City) %>%
-  filter(count >= 50)
+  filter(count >= 100)
 ```
 #Make Plots
 ## Map of Cases in Ontario
@@ -99,14 +99,14 @@ ontario_map <-
                       label = Reporting_PHU_City),
                   segment.alpha = 0.3,
                   fontface= "bold") +
-  scale_size_area(breaks = c(100,250,500),
+  scale_size_area(breaks = c(250,500,1000,2000),
                   max_size = 15,
                   name = "Count") +
   scale_color_distiller(palette = "RdYlGn",
                         direction = -1,
                         trans = "log10",
                         guide = FALSE) +
-  labs(title = paste0("Cities with more than 50 cases")) +
+  labs(title = paste0("Cities with more than 100 cases")) +
   theme_classic() + 
   theme(axis.title = element_blank(),
         axis.ticks = element_blank(),
@@ -122,14 +122,14 @@ ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_map.jpg"), height = 10, widt
 ```{r, warning=F}
 covid_on_total <-
   covid_on %>%
-  group_by(ACCURATE_EPISODE_DATE) %>%
+  group_by(Accurate_Episode_Date) %>%
   dplyr::summarise(ontario_total_day = n()) %>%
   mutate(total_cumulative = cumsum(ontario_total_day),
          Reporting_PHU_City = "Total") 
 
 lab <- 
   tail(covid_on_total, 1) %>% 
-  dplyr::select(ACCURATE_EPISODE_DATE, Reporting_PHU_City, total_cumulative)
+  dplyr::select(Accurate_Episode_Date, Reporting_PHU_City, total_cumulative)
 
 covid_on_city <-
   covid_on %>%
@@ -139,28 +139,28 @@ covid_on_city <-
 
 covid_on_city <-
   covid_on_city %>%
-  group_by(ACCURATE_EPISODE_DATE, Reporting_PHU_City) %>%
+  group_by(Accurate_Episode_Date, Reporting_PHU_City) %>%
   dplyr::summarise(city_total_day = n()) %>%
   group_by(Reporting_PHU_City) %>%
   mutate(total_cumulative = cumsum(city_total_day)) %>%
-  left_join( . , covid_on_city, by = c("ACCURATE_EPISODE_DATE","Reporting_PHU_City")) %>%
-  arrange(Reporting_PHU_City, ACCURATE_EPISODE_DATE)
+  left_join( . , covid_on_city, by = c("Accurate_Episode_Date","Reporting_PHU_City")) %>%
+  arrange(Reporting_PHU_City, Accurate_Episode_Date)
 
 days_since <-
   covid_on_city %>%
-  dplyr::select(Reporting_PHU_City, ACCURATE_EPISODE_DATE, total_cumulative) %>% 
+  dplyr::select(Reporting_PHU_City, Accurate_Episode_Date, total_cumulative) %>% 
   #bind_rows(.,covid_on_total) %>%
   filter(total_cumulative >= 10) %>%
   unique() %>%
-  arrange(Reporting_PHU_City, ACCURATE_EPISODE_DATE) %>%
+  arrange(Reporting_PHU_City, Accurate_Episode_Date) %>%
   group_by(Reporting_PHU_City) %>%
   mutate(days = row_number())
 
 covid_on_labels <-
   days_since %>%
-  dplyr::select(ACCURATE_EPISODE_DATE, days, Reporting_PHU_City, total_cumulative) %>%
+  dplyr::select(Accurate_Episode_Date, days, Reporting_PHU_City, total_cumulative) %>%
   group_by(Reporting_PHU_City) %>%
-  top_n(x = . , n = 1, wt = ACCURATE_EPISODE_DATE) %>%
+  top_n(x = . , n = 1, wt = Accurate_Episode_Date) %>%
   ungroup() %>%
   #top_n(x = ., n = 11, wt = total_cumulative) %>%
   mutate(city_name = paste(Reporting_PHU_City, total_cumulative, sep = " : "))
@@ -168,10 +168,10 @@ covid_on_labels <-
 
 rate <-
   days_since %>%
-  dplyr::select(ACCURATE_EPISODE_DATE, Reporting_PHU_City, total_cumulative) %>%
-  arrange(ACCURATE_EPISODE_DATE) %>%
+  dplyr::select(Accurate_Episode_Date, Reporting_PHU_City, total_cumulative) %>%
+  arrange(Accurate_Episode_Date) %>%
   group_by(Reporting_PHU_City) %>%
-  mutate(time_diff = as.numeric(ACCURATE_EPISODE_DATE - lag(ACCURATE_EPISODE_DATE)),  # just in case there are gaps in data
+  mutate(time_diff = as.numeric(Accurate_Episode_Date - lag(Accurate_Episode_Date)),  # just in case there are gaps in data
          case_diff = total_cumulative - lag(total_cumulative), # count diff in cases between dates
          rate_percent = ( case_diff / time_diff ) / lag(total_cumulative) * 100) %>%# growth rate
   filter(Reporting_PHU_City != "Total") %>%
@@ -224,8 +224,8 @@ city_path <-
                   segment.alpha = 0.3,
                   fontface = "bold",
                   seed = 1234) +
-  #annotation_logticks(sides = "l") +
-  #scale_y_log10()+
+  annotation_logticks(sides = "l") +
+  scale_y_continuous(trans = "log2")+
   scale_color_distiller(palette = "Reds",
                         direction = 1,
                         name = "Growth Rate (%)") +
@@ -246,8 +246,9 @@ ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_days.jpg"), height = 10, wid
 ```{r}
 age_group <-
   ggplot(covid_on%>%
-           filter(Age_Group != "Unknown"),
-         aes(x = ACCURATE_EPISODE_DATE,
+           filter(Age_Group != "Unknown",
+                  Accurate_Episode_Date >= as.Date("2020-03-01")),
+         aes(x = Accurate_Episode_Date,
              fill = fct_rev(Age_Group))) +
   geom_histogram(binwidth = 1) +
   scale_fill_brewer(palette = "Reds",
@@ -260,8 +261,7 @@ age_group <-
   theme_bw() +
   theme(plot.title = element_text(hjust = 0.5, size = 20),
         panel.grid.minor = element_blank(),
-        axis.title = element_text(size = 15)) +
-  xlim(c(start_on,end_on))
+        axis.title = element_text(size = 15))
 
 age_group
 
@@ -271,10 +271,11 @@ ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_age_bin.jpg"), height = 7, w
 ##Case information of COVID-19
 ```{r}
 case_info<-
-  ggplot(covid_on,
-         aes(x = ACCURATE_EPISODE_DATE,
-             fill = CASE_ACQUISITIONINFO)) +
-  geom_histogram(binwidth = 1) +
+  ggplot(covid_on %>%
+           filter(Accurate_Episode_Date >= as.Date("2020-03-01")),
+         aes(x = Accurate_Episode_Date,
+             fill = Case_AcquisitionInfo)) +
+  geom_histogram() +
   scale_fill_brewer(palette = "Reds",
                     name = "Case Info",
                     direction = -1) +
@@ -284,8 +285,8 @@ case_info<-
   theme_bw() +
   theme(plot.title = element_text(hjust = 0.5, size = 20),
         panel.grid.minor = element_blank(),
-        axis.title = element_text(size = 15)) +
-  xlim(c(start_on,end_on))
+        axis.title = element_text(size = 15)) #+
+  #xlim(c(start_on,end_on))
 
 case_info
 
@@ -295,10 +296,11 @@ ggsave(paste0(covidFigPath,"Ontario_Covid_",today,"_case_info.jpg"), height = 7,
 ```{r}
 outcomes <-
   ggplot(covid_on %>%
-           filter(Age_Group != "Unknown"),
+           filter(Age_Group != "Unknown",
+                  Accurate_Episode_Date >= as.Date("2020-03-01")),
          aes(x = Age_Group,
-             fill = OUTCOME1,
-             group = OUTCOME1)) +
+             fill = Outcome1,
+             group = Outcome1)) +
   geom_histogram(stat = "count",
                  size = 2,
                  position = "dodge") +
