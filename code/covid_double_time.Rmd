@@ -311,7 +311,7 @@ df2<-
   case_study %>%
   group_by(country_region) %>%
   arrange(date) %>%
-  filter(cu_cases > 10, country_region == "Singapore") %>%  
+  filter(cu_cases > 10) %>%  
   mutate(cases_logratio = tsibble::difference(log(cu_cases)),
          doubling_time = log(2) / cases_logratio,
          days_elapsed = as.numeric(date - min(date)))
@@ -319,13 +319,18 @@ df2<-
 df2
 
 df2 %>%
-group_by(consec = {consec = rle(doubling_time < 14); # find consec days
-rep(seq_along(consec$lengths),
-    consec$lengths)}) %>%
- mutate(Consec_days = ifelse(doubling_time <= 14, NA, seq_along(consec))) %>%
-  filter(Consec_days > 3,)
- ungroup() %>% 
- select(-c(consec,cname,iso3,pop_2018, cases))
+  group_by(country_region,
+           consec = {consec = rle(doubling_time < 14); # find consec days
+           rep(seq_along(consec$lengths),
+               consec$lengths)}) %>%
+  mutate(good_days = ifelse(doubling_time <= 14, NA, seq_along(consec)),
+         bad_days = ifelse(doubling_time > 14, NA, seq_along(consec))) %>%
+  group_by(country_region) %>%
+  mutate(max_good_days = max(good_days, na.rm = T),
+         max_bad_days = max(bad_days, na.rm = T)) %>%
+  filter(max_good_days > 7) %>%
+  ungroup() %>% 
+  select(-c(consec,cname,iso3,pop_2018, cases, deaths, cases_logratio, days_elapsed))
 ```
 
 ```{r}
@@ -345,35 +350,32 @@ sp <-
   filter(cu_cases > 10) %>%  
   mutate(cases_logratio = tsibble::difference(log(cu_cases)),
          doubling_time = log(2) / cases_logratio,
-         lag_doubling_time = lag(doubling_time),
          days_elapsed = as.numeric(date - min(date)),
          max_case = max(cu_cases),
          total_death = max(cu_deaths),
-         max_doub = max(doubling_time, na.rm = T),
          total_time = max(days_elapsed),
          ff = ifelse(country_region %in% case_countries,
                      "bold", "plain")) %>%
   group_by(country_region,
-           consec = {consec = rle(doubling_time > 14); 
-  rep(seq_along(consec$lengths), # find consec days
-      consec$lengths)}) %>%
-  mutate(Consec_days = ifelse(doubling_time >= 14, NA, seq_along(consec))) %>%
+           consec = {consec = rle(doubling_time < 14); # find consec days
+           rep(seq_along(consec$lengths),
+               consec$lengths)}) %>%
+  mutate(good_days = ifelse(doubling_time <= 14, NA, seq_along(consec)),
+         bad_days = ifelse(doubling_time > 14, NA, seq_along(consec))) %>%
+  ungroup() %>%
   group_by(country_region) %>%
-  mutate(max_streak = max(Consec_days)) %>%
+  mutate(max_good_days = max(good_days, na.rm = T),
+         max_bad_days = max(bad_days, na.rm = T)) %>%
   filter(doubling_time != Inf,
+         !is.na(doubling_time),
          days_elapsed <= 80,
          max_case > 1000,
-         max_streak > 14 | total_time > 75)
+         max_good_days > 7 | max_bad_days > 30)
 
 dc <-
   sp %>%
-  filter(!is.na(doubling_time),
-         !doubling_time == Inf,
-         !is.na(lag_doubling_time),
-         !lag_doubling_time == Inf,
-         #doubling_time >= 14 & lag_doubling_time >= 14
-         ) %>%
-  top_n(-1, wt = days_elapsed)
+  group_by(country_region) %>%
+  top_n(-1, wt = max_bad_days)
 
 dcc <-
 ggplot(dc,
