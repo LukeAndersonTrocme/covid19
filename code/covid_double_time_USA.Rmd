@@ -1,0 +1,350 @@
+---
+title: "Covid Log Ratio"
+author:
+- name: Luke Anderson-Trocmé,
+  affiliation:
+  - &cruk Department of Human Genetics, McGill University,  Montreal, Canada
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output:
+  html_notebook:
+    df_print: paged
+    code_folding: show
+    toc: yes
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+# Load Libraries and set paths
+```{r setup}
+pacman::p_load(ggplot2) # plotting functions
+pacman::p_load(cowplot) # combine plots
+pacman::p_load(ggrepel) # repel label text
+pacman::p_load(dplyr) # data wrangling
+pacman::p_load(broom)
+pacman::p_load(jsonlite)
+pacman::p_load(data.table)
+pacman::p_load(tidyverse)
+pacman::p_load(tsibble) # for difference function
+pacman::p_load(lubridate)
+pacman::p_load(colorspace)
+pacman::p_load(ggthemes)
+pacman::p_load(locfit)
+
+
+## rescale doubling time to reverse
+#https://stackoverflow.com/questions/11053899/how-to-get-a-reversed-log10-scale-in-ggplot2
+library("scales")
+reverselog_trans <- function(base = exp(1)) {
+    trans <- function(x) -log(x, base)
+    inv <- function(x) base^(-x)
+    trans_new(paste0("reverselog-", format(base)), trans, inv, 
+              log_breaks(base = base), 
+              domain = c(1e-100, Inf))
+}
+
+
+#Set Path
+covidPath <- '~/Documents/covid19/data/world/'
+covidFigPath <- '~/Documents/covid19/figures/'
+
+today <- format(Sys.Date(), "%Y-%B-%d")
+```
+# Load Data
+```{r, warning = F, message = F}
+##################################################
+# covdata
+# https://github.com/kjhealy/covdata
+#remotes::install_github("kjhealy/covdata")
+##################################################
+
+library("drat")
+drat::addRepo("kjhealy")
+install.packages("covdata")
+library(tidyverse)
+library(covdata)
+library(ggrepel)
+library(paletteer)
+library(prismatic)
+
+covnat
+
+##Stringency index
+#https://ocgptweb.azurewebsites.net/CSVDownload
+```
+
+```{r}
+us_states <- read.csv(paste0(covidPath, "states.csv"))
+us_regions <- read.csv(paste0(covidPath, "US/state_regions.csv"))
+us_lockdown <- read.csv(paste0(covidPath,"US/state_lockdown.csv")) %>%
+  mutate(lockdown_date = as.Date(lockdown_date, format = "%B %d, %Y"))
+
+#Google mobility trends
+#mobility_data_url <- "https://raw.githubusercontent.com/nacnudus/google-location-coronavirus/master/2020-04-05-country.tsv"
+#download.file(mobility_data_url, destfile = paste0(covidPath, "2020-04-05-country.tsv"), quiet = T)
+
+## Countries to highlight
+focus_states <- c("NY","NJ","MI","MA","PA")
+
+## Which n states are leading the count of positive cases or deaths?
+top <-10
+top_n_states <- function(data, n = top, measure = c("positive", "death")) {
+  meas <- match.arg(measure)
+  data %>%
+  group_by(region) %>%
+  filter(measure == meas, date == max(date)) %>%
+  drop_na() %>%
+  ungroup() %>%
+  top_n(n, wt = count) %>%
+  pull(region)
+}
+
+state_cols <- c("gray70", 
+                prismatic::clr_darken(paletteer_d("ggsci::category20_d3"), 0.2))
+
+## Colors
+cgroup_cols <- c(clr_darken(paletteer_d("ggsci::category20_d3"), 0.2)[1:top], "gray70")
+
+states <-
+  fread(paste0(covidPath, "Global_Mobility_Report.csv"), sep = ",", header = T) %>%
+  filter(country_region == "United States",
+         sub_region_1 != "",
+         sub_region_2 == "")  %>% 
+  mutate(date = as.Date(date)) %>%
+  filter(country_region %in% case_countries) %>%
+  mutate(date = as.Date(date)) %>%
+  inner_join( . ,
+         us_regions,
+         by = "sub_region_1") %>%
+  inner_join(. ,
+             covus %>% filter(measure == "positive"),
+             by = c("state","date")) %>%
+  inner_join( . ,
+              us_lockdown,
+              by = "sub_region_1") %>%
+  filter(count > 49) %>%
+  arrange(date) %>%
+  group_by(state) %>%
+  mutate(cases_logratio = tsibble::difference(log(count)),
+         doubling_time = log(2) / cases_logratio,
+         from_shutdown = as.numeric(difftime(date, lockdown_date, units = "days")),
+         #core = case_when(region %nin% top_n_states(covus) ~ "",
+        #                  TRUE ~ region),
+         end_label = ifelse(date == max(date), state, NA),
+         #end_label = case_when(region %in% core ~ end_label,
+        #                       TRUE ~ NA_character_),
+         #cgroup = case_when(region %in% core ~ region,
+        #                    TRUE ~ "ZZOTHER"),
+         days_elapsed = as.numeric(date - min(date))) %>%
+  filter(from_shutdown > -15) 
+  #dplyr::select(state, date, from_shutdown, days_elapsed, cases_logratio,doubling_time, count, deaths, trend, end_label)
+  
+#states$state <- reorder(states$state, states$count)
+states$division <- factor(states$division, levels = unique(states[order(states$region),]$division), ordered = TRUE)
+states$state <- factor(states$state, levels = unique(states[order(states$division),]$state), ordered = TRUE)
+
+state_tests <-
+  covus %>%
+  filter(measure %in% c('positive','negative')) %>%
+  group_by(state, date) %>%
+  dplyr::summarise(total_tests = sum(count, na.rm = T)) %>%
+  inner_join( . ,
+              states,
+              by = c("state","date")) %>%
+  arrange(date) %>%
+  group_by(state) %>%
+  mutate(tests_logratio = tsibble::difference(log(total_tests)),
+         doubling_time = log(2) / tests_logratio)
+
+
+states %>% filter(!is.na(end_label))
+```
+
+```{r}
+cu<-
+  ggplot(states %>%
+           arrange(desc(date)),
+         aes(x = days_elapsed, 
+             y = count, 
+             color = state, 
+             label = end_label, 
+             group = state)) + 
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA,
+                  fontface = "bold") +
+  #geom_vline(data = prov %>% filter(from_shutdown == 0),
+  #           aes(xintercept = days_elapsed),
+  #           size = 0.5, linetype =2,
+  #           color = "black") +
+  geom_line(size = 1.5) + 
+  guides(color = FALSE) + 
+  #scale_color_gradient(low = "tomato3", high = "yellow2") +
+  scale_color_discrete_divergingx(palette = "Earth") +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
+                     breaks = 2^seq(-2, 15, 1) * 100,
+                     trans = "log2") + 
+  scale_x_continuous(breaks = seq(0, 28, 7)) +
+  ylab("Cumulative Number of Cases (log2 scale)")+
+  theme_minimal() +
+  theme(axis.line.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        #panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA")) +
+  facet_grid(.~division, scales = "free_x", space = "free_x")
+
+lr <-
+ggplot(states %>%
+           arrange(desc(date)),
+         aes(x = days_elapsed, 
+             y = doubling_time, 
+             color = state,  
+             group = state)) + 
+  geom_text(data = states %>% group_by(state, division) %>% 
+              filter(doubling_time < Inf) %>%
+                    do(augment(loess(days_elapsed~doubling_time, .))) %>% 
+                    filter(days_elapsed == max(days_elapsed)),
+            aes(days_elapsed, .fitted, label = state), nudge_x = 5) +
+  #geom_vline(data = prov %>% filter(from_shutdown == 0),
+  #           aes(xintercept = days_elapsed),
+  #           size = 0.5, linetype =2,
+  #           color = "black") +
+  geom_point(size = 0.5) +
+  geom_smooth(method = "locfit", se = FALSE,  size = 1, aes(color = state)) + #
+  #geom_line(size = 0.5) +
+  guides(color = FALSE) + 
+  #scale_color_gradient(low = "tomato3", high = "yellow2") +
+  scale_color_discrete_divergingx(palette = "Earth") +
+  scale_x_continuous(breaks = seq(0, 28, 7)) +
+  ylab("Doubling Time")+
+  theme_minimal() +
+  theme(axis.line.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA")) +
+  facet_grid(.~division, scales = "free_x", space = "free_x") +
+  ylim(c(0,24))
+
+mobility <-
+ggplot(states %>%
+           arrange(desc(date)),
+         aes(x = days_elapsed, 
+             y = residential_percent_change_from_baseline,
+             color = state,
+             group = state,
+             label = end_label)) +
+  geom_text(data = states %>% group_by(state, division) %>% 
+              filter(doubling_time < Inf) %>%
+                    do(augment(loess(days_elapsed~residential_percent_change_from_baseline, .))) %>% 
+                    filter(days_elapsed == max(days_elapsed)),
+            aes(days_elapsed, .fitted, label = state), nudge_x = 5) +
+  #geom_vline(data = prov %>% filter(from_shutdown == 0),
+  #           aes(xintercept = days_elapsed),
+  #           size = 0.5, linetype =2,
+  #           color = "black") +
+  geom_point(size = 0.5) +
+  geom_smooth(method = "locfit", se = FALSE, size = 1, aes(color = state)) +
+  #scale_color_gradient(low = "tomato3", high = "yellow2", breaks = c(2,7,14,21)) +
+  scale_color_discrete_divergingx(palette = "Earth") +
+  scale_x_continuous(breaks = seq(0, 28, 7),
+                     labels = paste("week", seq(1,5,1))) +
+  guides(color = F) +
+  labs(x = "Days Since 10th Confirmed Case", y = "Residential activity trends") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        panel.border = element_rect(color = "black", fill = "NA")) +
+  facet_grid(.~division, scales = "free_x", space = "free_x")
+
+plot_grid(cu,lr,mobility,ncol=1, rel_heights = c(1,1,1), align = "v", axis = "b")
+
+ggsave(paste0(covidFigPath, "log_ratio_us_division.jpg"), height = 12, width = 18)
+```
+
+
+```{r}
+## Countries to highlight
+case_countries <- c("United States","Italy", "Sweden", "Denmark", "South Korea", "Singapore")
+#focus_cn <- c("USA","KOR", "ITA", "DNK", "SGP", "SWE", "GBR", "ESP", "FRA", "CAN", "JPN", "NOR","AUT", "AUS")
+#case_countries <- c("United States", "Italy", "United Kingdom", "Spain", "France","Canada", "Sweden", "Denmark", "South Korea", "Singapore", "Japan", "Norway","Austria","Australia")
+lockdown <- read.csv(paste0(covidPath,"lockdown.csv"), colClasses = c("character","Date","Date"))
+testing <- read.csv(paste0(covidPath,"owid-covid-data.csv")) %>%
+  mutate(date = as.Date(date),
+         country_region = location)
+
+case_study <-
+  covnat %>%
+  filter(cu_cases > 10) %>%
+  mutate(country_region = recode(cname, `Korea, Republic of` = "South Korea"))
+
+mobility_data <- 
+  fread(paste0(covidPath, "Global_Mobility_Report.csv"), sep = ",", header = T) %>%
+  filter(sub_region_1 == "",
+         sub_region_2 == "")  %>% 
+  mutate(date = as.Date(date)) %>%
+  right_join( . ,
+              case_study,
+              by = c("country_region","date")) %>% 
+  inner_join( . ,
+              testing,
+              by = c("country_region","date")) %>%
+  inner_join( . ,
+              lockdown,
+              by = "country_region") %>%
+  filter(country_region %in% case_countries) %>%
+  arrange(date) %>%
+  group_by(country_region)%>% 
+  mutate(cases_logratio = tsibble::difference(log(cu_cases)),
+         doubling_time = log(2) / cases_logratio,
+         from_shutdown = as.numeric(difftime(date, shutdown_date, units = "days")),
+         end_label = ifelse(from_shutdown == max(from_shutdown), country_region, NA),
+         days_elapsed = as.numeric(date - min(date))) #%>%
+  #filter(from_shutdown > -31)# %>%
+  #dplyr::select(country_region, date, from_shutdown, days_elapsed, cases_logratio,doubling_time, cu_cases, cu_deaths, trend,intersects, first_case, end_label)
+  
+mobility_data
+
+mobility_data$country_region <- reorder(mobility_data$country_region, -mobility_data$cu_cases)#factor(mobility_data$country_region, levels = case_countries)
+
+doubled_counts = 2^seq(-2, 15, 1) * 100
+double_times <- data.frame()
+for (country in unique(mobility_data$country_region)) {
+  
+  df <-  mobility_data %>% filter(country_region == country)
+  
+  double_time <- 
+    as.data.frame(
+      as.Date(sapply(doubled_counts, 
+             function(kk) #get moments of doubling
+               optimize(function(t0) 
+                 abs(approxfun(df$date, df$cu_cases)(t0) - kk),
+                 interval = range(df$date))$minimum), 
+      origin = "1970-01-01"))
+  names(double_time) <- "doubling_time"
+
+  double_times <-
+    double_time %>%
+    mutate(country_region = paste(country),
+           cu_cases = doubled_counts,
+           lag_cu_cases = lag(cu_cases),
+           lag_doubling_time = lag(doubling_time),
+           time = round(doubling_time - lag_doubling_time)) %>%
+    distinct(doubling_time, .keep_all = TRUE) %>%
+    filter(cu_cases <= max(df$cu_cases)) %>%
+    rbind(double_times, .) 
+  
+}
+
+double_times
+max_cases<-
+  mobility_data %>%
+  group_by(country_region) %>%
+  summarise(max_cu_cases = max(cu_cases)) %>%
+  arrange(-max_cu_cases)
+
+double_times$country_region <- factor(double_times$country_region, levels = max_cases$country_region)
+
+mobility_data$country_region <- factor(mobility_data$country_region, levels = max_cases$country_region)
+```
