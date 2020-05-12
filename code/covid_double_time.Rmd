@@ -114,6 +114,7 @@ covid <-
   arrange(date) %>%
   group_by(country_region)%>% 
   mutate(cases_logratio = tsibble::difference(log(cu_cases)),
+         #cases_logratio = tsibble::difference(log(cu_cases / total_tests)),
          doubling_time = log(2) / cases_logratio,
          from_shutdown = as.numeric(difftime(date, shutdown_date, units = "days")),
          days_elapsed = as.numeric(date - min(date)),
@@ -154,10 +155,6 @@ dc
 
 subset <- covid %>%
            filter(country_region %in% case_countries)
-
-
-
-covid %>% filter(country_region == "New Zealand")
 ```
 
 #Fancy plotting tid bits 
@@ -192,7 +189,7 @@ for (country in unique(subset$country_region)) {
 }
 
 double_times$country_region <- 
-  factor(double_times$country_region, levels = max_cases$country_region)
+  factor(double_times$country_region, levels = levels(covid$country_region))
 
 ## rescale doubling time to reverse
 #https://stackoverflow.com/questions/11053899/how-to-get-a-reversed-log10-scale-in-ggplot2
@@ -229,7 +226,7 @@ cu<-
   #geom_vline(data = double_times,
   #           aes(xintercept = doubling_time,
   #               group = country_region), linetype = 1, color = "grey80") +
-  geom_vline(data = smooth_rate %>%
+  geom_vline(data = subset %>%
                filter(.fitted <= 14,
                       .fitted > 1),
              aes(xintercept = date,
@@ -293,15 +290,14 @@ cu<-
 
 
 lr <-
-  ggplot(subset %>%
-           arrange(desc(date)),
+  ggplot(subset,
          aes(x = date, 
              y = doubling_time, 
              group = country_region)) + 
   #geom_vline(data = double_times,
   #           aes(xintercept = doubling_time,
   #               group = country_region), linetype = 1, color = "grey80") +
-  geom_vline(data = smooth_rate %>%
+  geom_vline(data = subset %>%
                filter(.fitted <= 14,
                       .fitted > 1),
              aes(xintercept = date,
@@ -309,10 +305,10 @@ lr <-
                  alpha = 1/.fitted), linetype = 1, color = "tomato", size = 4) +
   geom_point(size = 0.2) +
   #geom_smooth(method = "loess", se = FALSE, color = "black", size = 1) +
-  geom_line(data = smooth_rate,
+  geom_line(data = subset,
             aes(x = date,
                 y = .fitted)) +
-  geom_point(data = smooth_rate %>%
+  geom_point(data = subset %>%
                filter(from_shutdown == 0),
              aes(x = date,
                  y = .fitted), 
@@ -355,7 +351,7 @@ mob <-
   #geom_vline(data = double_times,
   #           aes(xintercept = doubling_time,
   #               group = country_region), linetype = 1, color = "grey80") +
-  geom_vline(data = smooth_rate %>%
+  geom_vline(data = subset %>%
                filter(.fitted <= 14,
                       .fitted > 1),
              aes(xintercept = date,
@@ -390,7 +386,7 @@ mob <-
 
 plot_grid(cu,lr,mob,ncol=1, rel_heights = c(1,1,1.2), align = "v", axis = "b")
 
-ggsave(paste0(covidFigPath, "doubling_time_red.jpg"), height = 15, width = 20)
+ggsave(paste0(covidFigPath, "doubling_time_red_pr.jpg"), height = 15, width = 20)
 ```
 
 
@@ -399,7 +395,7 @@ ggsave(paste0(covidFigPath, "doubling_time_red.jpg"), height = 15, width = 20)
 spp<-
   ggplot() + 
   geom_rect(data = red_rect, 
-            aes(xmin=0, xmax=max(sp$max_days),
+            aes(xmin=0, xmax=max(covid$max_days),
                 ymin=ymin, ymax=ymax, 
                 alpha=alpha_gradient, group = 1), size = 1, fill="tomato") +
   geom_hline(yintercept = 14, linetype = 2, color = "grey50", size = 0.1) +
@@ -427,7 +423,7 @@ spp<-
   scale_y_continuous(trans = reverselog_trans(2), 
                      breaks = c(2,4, 7,14,28, 56, 112, 224),
                      labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months", "8 months"),
-                     limits = c(max(sp$doubling_time),1)) +
+                     limits = c(max(covid$doubling_time),1)) +
   scale_size_manual(values = c(5,6,1.5,0.7)) +
   scale_color_identity() +
   guides(size = F, alpha = F) +
@@ -478,6 +474,133 @@ ggsave(paste0(covidFigPath, paste0("time_since",case_limit,".jpg")), height = 10
 
 ```
 
+#positive rate
+```{r}
+label2 <- 
+  covid %>%
+  filter(is.na(total_tests) == F,
+         is.na(total_cases) == F,
+         country_region != "Singapore") %>%
+  group_by(country_region) %>%
+  top_n( ., 1, wt = days_elapsed) %>%
+  mutate(end_label = country_region)
+  
+    
+pr <-
+ggplot(subset %>%
+         filter(country_region != "Singapore",
+                is.na(total_cases / total_tests) == F),
+       aes(x = days_elapsed, 
+           y = total_cases / total_tests * 1000,  
+           group = country_region,
+           color = country_region,
+           label = end_label)) + 
+  geom_smooth(data = covid %>%
+                filter(!country_region %in% case_countries,
+                       is.na(total_cases / total_tests) == F),
+              aes(x = days_elapsed, 
+                  y = total_cases / total_tests * 1000,  
+                  group = country_region),
+              method = "locfit", size = 1.5, se = F,
+              color = "grey60") +
+  #geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(mehtod = "locfit",size = 1.5, se = F) + 
+  geom_text_repel(data = label2,
+                  aes(x = days_elapsed, 
+                      y = total_cases / total_tests * 1000,
+                      group = country_region,
+                      fontface = ff,
+                      label = end_label),
+                  color = "black") +
+  labs(y = "Number of Cases per 1000 Tests",
+       x = paste("Days Since",case_limit,"Confirmed Cases"))+
+  scale_color_discrete_qualitative()+
+  guides(color = F) +
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+
+plot_grid(pr, spp, dcc, nrow = 1, align = "h", axis = "l", rel_widths = c(1,1,1.3))
+
+
+pr <-
+ggplot(subset %>%
+         filter(country_region != "Singapore",
+                is.na(total_cases / total_tests) == F),
+       aes(x = .fitted, 
+           y = total_cases / total_tests * 1000,  
+           group = country_region,
+           color = country_region,
+           label = end_label)) + 
+  geom_smooth(data = covid %>%
+                filter(!country_region %in% case_countries,
+                       is.na(total_cases / total_tests) == F,
+                       log2(.fitted) > 1),
+              aes(x = .fitted, 
+                  y = total_cases / total_tests * 1000,  
+                  group = country_region),
+              method = "locfit", size = 1.5, se = F,
+              color = "grey60") +
+  scale_x_continuous(trans = "log2",
+                     breaks = c(2,4, 7,14,28, 56, 112, 224),
+                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months", "8 months"),
+                     limits = c(1,max(covid$doubling_time))) +
+  geom_smooth(mehtod = "locfit",size = 1.5, se = F) + 
+  geom_text_repel(data = label2,
+                  aes(x = .fitted, 
+                      y = total_cases / total_tests * 1000,
+                      group = country_region,
+                      fontface = ff,
+                      label = end_label),
+                  color = "black") +
+  labs(y = "Number of Cases per 1000 Tests",
+       x = "Doubling Time")+
+  scale_color_discrete_qualitative()+
+  guides(color = F) +
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text.y = element_text(size = 15),
+        axis.text.x = element_text(size = 15, angle = 70, vjust = 0.5),
+        axis.title = element_text(size = 15))
+```
+
+
+```{r}
+dual_axes <-
+  ggplot(subset,
+         aes(x = date,
+             group = country_region)) +
+  geom_smooth(aes(y = residential_percent_change_from_baseline,
+                  color = "Residential % change from baseline"),
+              method = "loess", se = FALSE, size = 1) +
+  geom_step(aes(y = StringencyIndex, color = "Stringency Index"), size = 1.5) +
+  geom_line(aes(y = log2(.fitted) * 10, color = "Doubling Time"), size = 1.5) +
+  scale_y_continuous(sec.axis = sec_axis(~./10, name = "Doubling Time (Log 2)")) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b")+
+  scale_color_manual(values = c("blue","black",  "red"), name = "") +
+  labs(x = "Date", y = "Stringency Index (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        legend.text = element_text(size = 15),
+        strip.text = element_text(size = 15,
+                                  face = "bold")) +
+  facet_grid(.~country_region, scales = "free_x", space = "free_x")
+
+
+dual_axes
+```
 
 ##Provinces
 
@@ -543,7 +666,7 @@ p1 <-
   geom_text_repel(nudge_x = 0.75,
                   segment.color = NA,
                   fontface = "bold") + 
-  scale_color_manual(values = cgroup_cols) +
+  #scale_color_manual(values = cgroup_cols) +
   guides(color = FALSE) + 
   scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
                      breaks = 10^seq(1, 10, 1),
@@ -566,7 +689,7 @@ p2 <-
   geom_text_repel(nudge_x = 0.75,
                   segment.color = NA,
                   fontface = "bold") + 
-  scale_color_manual(values = cgroup_cols) +
+  #scale_color_manual(values = cgroup_cols) +
   guides(color = FALSE) + 
   xlab("Days Since Social Distancing Policy") +
   ylab("Doubling Time")+
@@ -587,7 +710,7 @@ p2.5 <-
   geom_text_repel(nudge_x = 0.75,
                   segment.color = NA,
                   fontface = "bold") + 
-  scale_color_manual(values = cgroup_cols) +
+  #scale_color_manual(values = cgroup_cols) +
   guides(color = FALSE) + 
   xlab("Days Since Social Distancing Policy") +
   ylab("Log Ratio")+
@@ -607,7 +730,7 @@ p3 <-
   geom_text_repel(nudge_x = 0.75,
                   segment.color = NA,
                   fontface = "bold") + 
-  scale_color_manual(values = cgroup_cols) +
+  #scale_color_manual(values = cgroup_cols) +
   guides(color = FALSE) + 
   scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
                      breaks = 10^seq(1, 10, 1),
