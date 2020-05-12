@@ -286,9 +286,6 @@ cu<-
   facet_grid(.~country_region, scales = "free_x", space = "free_x")
 
 
-
-
-
 lr <-
   ggplot(subset,
          aes(x = date, 
@@ -603,55 +600,73 @@ dual_axes
 ```
 
 ##Provinces
-
 ```{r}
-can_lockdown <- read.csv(paste0(covidPath,"../canada/can_lockdown.csv"), colClasses = c("character","character","Date"))
+can_lockdown <- read.csv(paste0(covidPath,"../canada/can_lockdown.csv"), colClasses = c("character","character","Date")) %>% rename(prname = region_name)
 
-#github path
-ishaberry_data_url <- "https://raw.githubusercontent.com/ishaberry/Covid19Canada/master/"
-# cases.csv: Individual-level cases
-#download.file(paste0(ishaberry_data_url,"cases.csv"), 
-#              destfile = paste0(covidPath, "cases.csv"), quiet = T)
-cases <- read.csv(paste0(covidPath, "cases.csv")) %>%
-  mutate(date_report = as.Date(date_report, "%d-%m-%Y")) %>%
-  group_by(date_report, province) %>%
-  dplyr::summarise(prov_daily_total = n()) %>%
-  group_by(province) %>%
-  mutate(prov_cu_cases = cumsum(prov_daily_total))
-
-cases
-
-#Google mobility trends
-#mobility_data_url <- "https://raw.githubusercontent.com/nacnudus/google-location-coronavirus/master/2020-04-05-country.tsv"
-#download.file(mobility_data_url, destfile = paste0(covidPath, "2020-04-05-country.tsv"), quiet = T)
+can_data_url <- "https://health-infobase.canada.ca/src/data/covidLive/covid19.csv"
+#download.file(paste0(can_data_url),destfile = paste0(covidPath, "can_covid19.csv"), quiet = T)
 
 prov <-
-  fread(paste0(covidPath, "2020-04-05-country.tsv"), sep = "\t", header = T) %>%
-  filter(country_name == "Canada", 
-         type == "region",
-         category == "Residential") %>%
-  dplyr::select(-c(url, page, row,col, group)) %>%
-  mutate(date_report = as.Date(date),
-         province = gsub("British Columbia","BC", region_name),
-         province = gsub("Newfoundland and Labrador","NL", province)) %>%
-  inner_join(. ,
-             cases,
-             by = c("province","date_report")) %>%
+  read.csv(paste0(covidPath, "can_covid19.csv")) %>%
   inner_join( . ,
               can_lockdown,
-              by = "region_name") %>%
-  filter(prov_cu_cases > 10,
-         prabb %in% c("QC","ON","AB","BC")) %>%
-  arrange(date_report) %>%
-  group_by(province) %>%
-  mutate(cases_logratio = tsibble::difference(log(prov_cu_cases)),
+              by = "prname") %>%
+  mutate(date = as.Date(as.character(date),format="%d-%m-%Y")) %>%
+  filter(numconf > 10) %>%
+  arrange(date) %>%
+  group_by(prname) %>%
+  mutate(cases_logratio = tsibble::difference(log(numconf)),
          doubling_time = log(2) / cases_logratio,
-         from_shutdown = as.numeric(difftime(date_report, lockdown_date, units = "days")),
+         from_shutdown = as.numeric(difftime(date, lockdown_date, units = "days")),
          end_label = ifelse(date == max(date), prabb, NA),
-         days_elapsed = as.numeric(date_report - min(date_report)))
-  
-prov$prabb <- reorder(prov$prabb, -prov$prov_cu_cases)
+         days_elapsed = as.numeric(date - min(date)),
+         max_case = max(numconf, na.rm = T))
+
+prov$prabb <- reorder(prov$prabb, prov$max_case)
+
+prov
 ```
+
+#positive rate
+```{r}
+label_can <- 
+  prov %>%
+  filter(is.na(numtested) == F,
+         is.na(numtotal) == F) %>%
+  group_by(prname) %>%
+  top_n( ., 1, wt = days_elapsed) %>%
+  mutate(end_label = prname)
+  
+    
+pr_can <-
+ggplot(prov %>%
+         filter(is.na(numtotal / numtested) == F),
+       aes(x = days_elapsed, 
+           y = numtotal / numtested * 1000,  
+           group = prname,
+           color = prname,
+           label = end_label)) + 
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "locfit",size = 1.5, se = F) + 
+  geom_text_repel(data = label_can,
+                  aes(x = days_elapsed, 
+                      y = numtotal / numtested * 1000,
+                      group = prname,
+                      label = end_label),
+                  color = "black") +
+  labs(y = "Number of Cases per 1000 Tests",
+       x = paste("Days Since",10,"Confirmed Cases"))+
+  scale_color_discrete_qualitative()+
+  guides(color = F) +
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+```
+
 
 ```{r}
 p1 <-
