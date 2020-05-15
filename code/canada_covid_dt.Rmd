@@ -1,0 +1,615 @@
+---
+title: "Covid Log Ratio"
+author:
+- name: Luke Anderson-Trocmé,
+  affiliation:
+  - &cruk Department of Human Genetics, McGill University,  Montreal, Canada
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output:
+  html_notebook:
+    df_print: paged
+    code_folding: show
+    toc: yes
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+# Load libraries and set paths
+```{r setup}
+pacman::p_load(drat) #to download latest covdata
+pacman::p_load(ggplot2) # plotting functions
+pacman::p_load(cowplot) # combine plots
+pacman::p_load(ggrepel) # repel label text
+pacman::p_load(dplyr) # data wrangling
+pacman::p_load(broom)
+pacman::p_load(jsonlite)
+pacman::p_load(data.table)
+pacman::p_load(tidyverse)
+pacman::p_load(tsibble) # for difference function
+pacman::p_load(lubridate)
+pacman::p_load(colorspace)
+pacman::p_load(ggthemes)
+pacman::p_load(locfit)
+pacman::p_load(zoo)
+
+#Set Path
+covidPath <- '~/Documents/covid19/data/world/'
+covidFigPath <- '~/Documents/covid19/figures/'
+```
+##Provinces
+```{r}
+##################################################
+# Google mobility trends
+# https://www.google.com/covid19/mobility/
+##################################################
+mobility_data_can <- 
+  fread(paste0(covidPath, "Global_Mobility_Report.csv"), sep = ",", header = T) %>%
+  filter(country_region == "Canada")  %>% 
+  rename(prname = sub_region_1) %>%
+  mutate(date = as.Date(date))
+
+
+can_lockdown <- read.csv(paste0(covidPath,"../canada/can_lockdown.csv"), colClasses = c("character","character","Date")) %>% rename(prname = region_name)
+
+can_data_url <- "https://health-infobase.canada.ca/src/data/covidLive/covid19.csv"
+#download.file(paste0(can_data_url),destfile = paste0(covidPath, "can_covid19.csv"), quiet = T)
+
+prov <-
+  read.csv(paste0(covidPath, "can_covid19.csv")) %>% 
+  mutate(date = as.Date(as.character(date),format="%d-%m-%Y")) %>%
+  inner_join( . ,
+              can_lockdown,
+              by = "prname") %>%
+  inner_join(. ,
+             mobility_data_can,
+             by = c("prname","date")) %>%
+  filter(numconf > 10) %>%
+  arrange(date) %>%
+  group_by(prname) %>%
+  mutate(cases_logratio = tsibble::difference(log(numconf)),
+         doubling_time = log(2) / cases_logratio,
+         from_shutdown = as.numeric(difftime(date, lockdown_date, units = "days")),
+         end_label = ifelse(date == max(date), prabb, NA),
+         days_elapsed = as.numeric(date - min(date)),
+         max_case = max(numconf, na.rm = T))
+
+
+
+prov <-
+  prov %>% 
+  filter(doubling_time < Inf) %>%
+  group_by(prname) %>%
+  do(augment(loess(doubling_time ~ days_elapsed, .))) %>% 
+  inner_join(. , prov,
+             by = c("prname", "days_elapsed", "doubling_time")) %>%
+  mutate(max_days = max(days_elapsed, na.rm = T),
+         end_label = ifelse(days_elapsed == max_days, 
+                            as.character(prname), NA))
+
+prov$prname <- reorder(prov$prname, prov$max_case)
+
+death_count_can <-
+  prov %>%
+  group_by(prname) %>%
+  mutate(bad_day = ifelse(.fitted < 14, 1, 0)) %>%
+  dplyr::summarise(tests = max(numtested, na.rm = T),
+                   death = max(numdeaths),
+                   sum_bad = sum(bad_day))
+```
+
+#Fancy plotting tid bits 
+```{r}
+
+doubled_counts = 2^seq(-2, 15, 1) * 100
+double_times_can <- data.frame()
+for (country in unique(prov$prname)) {
+  
+  df <-  prov %>% filter(prname == country)
+  
+  double_time <- 
+    as.data.frame(
+      as.Date(sapply(doubled_counts, 
+                     function(kk) #get moments of doubling
+                       optimize(function(t0) 
+                         abs(approxfun(df$date, df$numconf)(t0) - kk),
+                         interval = range(df$date))$minimum), 
+              origin = "1970-01-01"))
+  names(double_time) <- "doubling_time"
+  
+  double_times_can <-
+    double_time %>%
+    mutate(prname = paste(country),
+           numconf = doubled_counts,
+           lag_numconf = lag(numconf),
+           lag_doubling_time = lag(doubling_time),
+           time = round(doubling_time - lag_doubling_time)) %>%
+    distinct(doubling_time, .keep_all = TRUE) %>%
+    filter(numconf <= max(df$numconf)) %>%
+    rbind(double_times_can, .) 
+}
+
+double_times_can$prname <- 
+  factor(double_times_can$prname, levels = levels(prov$prname))
+
+## rescale doubling time to reverse
+#https://stackoverflow.com/questions/11053899/how-to-get-a-reversed-log10-scale-in-ggplot2
+library("scales")
+reverselog_trans <- function(base = exp(1)) {
+  trans <- function(x) -log(x, base)
+  inv <- function(x) base^(-x)
+  trans_new(paste0("reverselog-", format(base)), trans, inv, 
+            log_breaks(base = base), 
+            domain = c(1e-100, Inf))
+}
+
+
+n_steps <- 100
+alpha_gradient <- seq(from = 0.00001, to = 0, length.out = n_steps)
+y_steps <- seq(from = -2, to = 14, length.out = n_steps + 1)
+
+red_rect <- data.frame(ymin = y_steps[-(n_steps + 1)], 
+                            ymax = y_steps[-1],
+                            days_elapsed = 0,
+                            doubling_time = 0,
+                            alpha_gradient = alpha_gradient)
+```
+
+#positive rate
+```{r}
+label_can <- 
+  prov %>%
+  filter(is.na(numtested) == F,
+         is.na(numtotal) == F) %>%
+  group_by(prname) %>%
+  top_n( ., 1, wt = days_elapsed) %>%
+  mutate(end_label = prname)
+  
+    
+pr_can <-
+ggplot(prov %>%
+         filter(is.na(numtotal / numtested) == F),
+       aes(x = days_elapsed, 
+           y = numtotal / numtested * 1000,  
+           group = prname,
+           color = prname,
+           label = end_label)) + 
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "locfit",size = 1.5, se = F) + 
+  geom_text_repel(data = label_can,
+                  aes(x = days_elapsed, 
+                      y = numtotal / numtested * 1000,
+                      group = prname,
+                      label = end_label),
+                  color = "black") +
+  labs(y = "Number of Cases per 1000 Tests",
+       x = paste("Days Since",10,"Confirmed Cases"))+
+  scale_color_discrete_qualitative()+
+  guides(color = F) +
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+```
+
+
+
+# Figure 1
+```{r}
+cu<-
+  ggplot(prov,
+         aes(x = date, 
+             y = numconf,  
+             group = prname)) + 
+  #geom_vline(data = double_times_can,
+  #           aes(xintercept = doubling_time,
+  #               group = prname), linetype = 1, color = "grey80") +
+  geom_vline(data = prov %>%
+               filter(.fitted <= 14,
+                      .fitted > 1),
+             aes(xintercept = date,
+                 group = prname, 
+                 alpha = 1/.fitted), linetype = 1, color = "tomato", size = 4) +
+  geom_segment(data = double_times_can,
+               mapping = aes(x = lag_doubling_time,
+                             xend = doubling_time,
+                             y = numconf,
+                             yend = numconf),
+               color = "black",
+               size = 0.5) +
+  geom_segment(data = double_times_can,
+               mapping = aes(x = lag_doubling_time,
+                             xend = lag_doubling_time,
+                             y = lag_numconf,
+                             yend = numconf),
+               color = "black",
+               size = 0.5) +
+  geom_line(size = 1) + 
+  geom_line(data = prov,
+            aes(y = numdeaths),
+            color = "black",
+            linetype = 3,
+            size = 0.5) +
+  geom_line(data = prov,
+            aes(y = numtested),
+            color = "black",
+            size = 0.5,
+            linetype = 2) +
+  geom_point(data = prov %>% 
+               filter(from_shutdown == 0),
+             aes(x = date,
+                 y = numconf), 
+             size = 3,
+             shape = 21,
+             fill = "yellow") +
+  scale_alpha_continuous(range = c(0.001,0.2), trans = "log10") +
+  guides(alpha = F) +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
+                     breaks = 2^seq(-2, 15, 1) * 100,
+                     trans = "log2",
+                     limits = c(10, 10000000)) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b")+
+  ylab("Cumulative Cases\n(log2 scale)")+
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        legend.text = element_text(size = 15),
+        strip.text = element_text(size = 15,
+                                  face = "bold")) +
+  facet_grid(.~prname, scales = "free_x", space = "free_x")
+
+
+lr <-
+  ggplot(prov,
+         aes(x = date, 
+             y = doubling_time, 
+             group = prname)) + 
+  #geom_vline(data = double_times_can,
+  #           aes(xintercept = doubling_time,
+  #               group = prname), linetype = 1, color = "grey80") +
+  geom_vline(data = prov %>%
+               filter(.fitted <= 14,
+                      .fitted > 1),
+             aes(xintercept = date,
+                 group = prname, 
+                 alpha = 1/.fitted), linetype = 1, color = "tomato", size = 4) +
+  geom_point(size = 0.2) +
+  #geom_smooth(method = "loess", se = FALSE, color = "black", size = 1) +
+  geom_line(data = prov,
+            aes(x = date,
+                y = .fitted)) +
+  geom_point(data = prov %>%
+               filter(from_shutdown == 0),
+             aes(x = date,
+                 y = .fitted), 
+             size = 3,
+             shape = 21,
+             fill = "yellow") +
+  scale_alpha_continuous(range = c(0.001,0.2), trans = "log10") +
+  guides(alpha = F) +
+  scale_y_continuous(trans = reverselog_trans(2), 
+                     breaks = c(2,4, 7,14,28, 56, 112),
+                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months")) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b")+
+  ylab("Doubling Time\n(log2 scale)")+
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        legend.text = element_text(size = 15),
+        strip.text = element_text(size = 15,
+                                  face = "bold")) +
+  facet_grid(.~prname, scales = "free_x", space = "free_x")
+
+mob_lab <-
+  prov %>% 
+  group_by(prname) %>%
+  do(augment(loess(residential_percent_change_from_baseline ~ from_shutdown, .))) %>% 
+  inner_join(. , prov %>% dplyr::select(prname, date, from_shutdown),
+             by = c("prname", "from_shutdown")) %>%
+  filter(from_shutdown == 0)
+
+mob <-
+  ggplot(prov,
+         aes(x = date, 
+             y = residential_percent_change_from_baseline,
+             group = prname)) +
+  #geom_vline(data = double_times_can,
+  #           aes(xintercept = doubling_time,
+  #               group = prname), linetype = 1, color = "grey80") +
+  geom_vline(data = prov %>%
+               filter(.fitted <= 14,
+                      .fitted > 1),
+             aes(xintercept = date,
+                 group = prname, 
+                 alpha = 1/.fitted), linetype = 1, color = "tomato", size = 4) +
+  geom_point(size = 0.2) +
+  geom_smooth(method = "loess", se = FALSE, color = "black", size = 1) + 
+  geom_point(data = mob_lab,
+             aes(x = date,
+                 y = .fitted), 
+             size = 3,
+             shape = 21,
+             fill = "yellow") +
+  scale_alpha_continuous(range = c(0.001,0.2), trans = "log10") +
+  guides(alpha = F) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b")+
+  labs(x = "Date", y = "Residential Mobility Trends\n(% change from baseline)") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        legend.text = element_text(size = 15),
+        strip.text = element_text(size = 15,
+                                  face = "bold")) +
+  facet_grid(.~prname, scales = "free_x", space = "free_x")
+
+plot_grid(cu,lr,mob,ncol=1, rel_heights = c(1,1,1.2), align = "v", axis = "b")
+
+ggsave(paste0(covidFigPath, "doubling_time_canada.jpg"), height = 15, width = 20)
+```
+
+##fig2 canada
+```{r}
+spp<-
+  ggplot() + 
+  geom_rect(data = red_rect, 
+            aes(xmin=0, xmax=max(prov$max_days),
+                ymin=ymin, ymax=ymax, 
+                alpha=alpha_gradient, group = 1), size = 1, fill="tomato") +
+  geom_hline(yintercept = 14, linetype = 2, color = "grey50", size = 0.1) +
+  geom_line(data = prov,
+            aes(x = days_elapsed,
+                y = .fitted,
+                group = prname),
+            color = "grey60") +
+  geom_line(data = prov,
+            aes(x = days_elapsed,
+                y = .fitted,
+                group = prname),
+            color = "black") +
+  geom_text_repel(data = prov, 
+                  aes(x = days_elapsed,
+                      y = .fitted,
+                      group = prname,
+                      label = end_label)) +
+  scale_y_continuous(trans = reverselog_trans(2), 
+                     breaks = c(2,4, 7,14,28, 56, 112, 224),
+                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months", "8 months"),
+                     limits = c(max(prov$doubling_time),1)) +
+  scale_size_manual(values = c(5,6,1.5,0.7)) +
+  scale_color_identity() +
+  guides(size = F, alpha = F) +
+  labs(x = paste0("Days since ",10,"th reported case"),
+       y = "Doubling time\n(log2 scale)")+
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+
+
+dcc <-
+  ggplot(death_count_can,
+         aes(x = sum_bad,
+             y = death,
+             label = prname,
+             size = tests)) +
+  geom_point(alpha = 0.3) +
+  geom_point(data = death_count_can %>% 
+               filter(tests == -Inf),
+             size = 1,
+             shape = 2) +
+  labs(x = "Days of Uncontrolled Spread",
+       y = "Total COVID-19 deaths\n(log2 scale)") +
+  scale_size_area(max_size = 14, 
+                  breaks = c(10,20,40,80,100),
+                  name = "Total tests\nper thousand") +
+  scale_y_continuous(trans = "log2",
+                     labels = scales::comma_format(accuracy = 1), 
+                     breaks = 2^seq(-4, 15, 1) * 100) +
+  geom_text_repel(size = 5) +
+  theme_minimal() +
+  theme(#legend.position = "bottom",
+    panel.grid.minor.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.border = element_rect(color = "black", fill = "NA"),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.text = element_text(size = 15))
+
+
+plot_grid(spp, dcc, nrow = 1, align = "h", axis = "l", rel_widths = c(1,1.3))
+
+ggsave(paste0(covidFigPath, paste0("time_since",10,"canada.jpg")), height = 10, width = 22)
+
+```
+
+
+```{r}
+p1 <-
+  ggplot(prov,
+         aes(x = from_shutdown, 
+             y = prov_cu_cases, 
+             color = prabb, 
+             label = end_label, 
+             group = prabb)) + 
+  geom_vline(xintercept = 0) +
+  geom_line(size = 1.5) + 
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA,
+                  fontface = "bold") + 
+  #scale_color_manual(values = cgroup_cols) +
+  guides(color = FALSE) + 
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
+                     breaks = 10^seq(1, 10, 1),
+                     trans = "log2") + 
+  xlab("Days Since Social Distancing Policy") +
+  ylab("CODID-19 Cases (log2 scale)")+
+  theme_minimal()
+
+
+p2 <-
+ ggplot(prov,
+         aes(x = from_shutdown, 
+             y = doubling_time, 
+             color = prabb, 
+             label = end_label, 
+             group = prabb))  + 
+  geom_vline(xintercept = 0) +
+  #geom_point(size = 0.5) + 
+  geom_smooth(method = "locfit", se = F) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA,
+                  fontface = "bold") + 
+  #scale_color_manual(values = cgroup_cols) +
+  guides(color = FALSE) + 
+  xlab("Days Since Social Distancing Policy") +
+  ylab("Doubling Time")+
+  theme_minimal() +
+  ylim(c(0,14))
+
+p2.5 <-
+ ggplot(prov,
+         aes(x = from_shutdown, 
+             y = cases_logratio, 
+             color = prabb, 
+             label = end_label, 
+             group = prabb)) + 
+  geom_vline(xintercept = 0) +
+  #geom_point(size = 0.5) + 
+  geom_smooth(method = "locfit", se = F) +
+  #geom_line() +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA,
+                  fontface = "bold") + 
+  #scale_color_manual(values = cgroup_cols) +
+  guides(color = FALSE) + 
+  xlab("Days Since Social Distancing Policy") +
+  ylab("Log Ratio")+
+  theme_minimal() +
+  ylim(c(0,0.6))
+
+p3 <-
+ ggplot(prov,
+         aes(x = from_shutdown, 
+             y = trend, 
+             color = prabb, 
+             label = end_label, 
+             group = prabb)) + 
+  geom_vline(xintercept = 0) +
+  #geom_point(size = 0.5) + 
+  geom_smooth(method = "locfit", se = F) +
+  geom_text_repel(nudge_x = 0.75,
+                  segment.color = NA,
+                  fontface = "bold") + 
+  #scale_color_manual(values = cgroup_cols) +
+  guides(color = FALSE) + 
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
+                     breaks = 10^seq(1, 10, 1),
+                     trans = "log2") + 
+  xlab("Days Since Social Distancing Policy") +
+  ylab("Residential mobility trends")+
+  theme_minimal()
+pp <-
+plot_grid(p1,p2,p2.5,p3,ncol=1, align = "v", axis = "b")
+pp
+```
+
+```{r}
+cu<-
+  ggplot(prov %>%
+           arrange(desc(date_report)),
+         aes(x = days_elapsed, 
+             y = prov_cu_cases, 
+             color = doubling_time, 
+             label = end_label, 
+             group = prabb)) + 
+  geom_vline(data = prov %>% filter(from_shutdown == 0),
+             aes(xintercept = days_elapsed),
+             size = 0.5, linetype =2,
+             color = "black") +
+  geom_line(size = 1.5) + 
+  geom_point(size = 1) + 
+  guides(color = FALSE) + 
+  scale_color_gradient(low = "tomato3", high = "yellow2") +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
+                     breaks = 2^seq(-2, 15, 1) * 100,
+                     trans = "log2") + 
+  ylab("Cumulative Number of Cases (log2 scale)")+
+  theme_minimal() +
+  theme(axis.line.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA")) +
+  facet_grid(.~prabb, scales = "free_x", space = "free_x")
+
+lr <-
+ggplot(prov %>%
+           arrange(desc(date_report)),
+         aes(x = days_elapsed, 
+             y = doubling_time, 
+             color = doubling_time, 
+             label = end_label, 
+             group = country_name)) + 
+  geom_vline(data = prov %>% filter(from_shutdown == 0),
+             aes(xintercept = days_elapsed),
+             size = 0.5, linetype =2,
+             color = "black") +
+  geom_point() +
+  geom_smooth(method = "locfit",  size = 0.5, color = "black") + #se = FALSE,
+  #geom_line(size = 0.5) +
+  guides(color = FALSE) + 
+  scale_color_gradient(low = "tomato3", high = "yellow2") +
+  ylab("Doubling Time")+
+  theme_minimal() +
+  theme(axis.line.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA")) +
+  facet_grid(.~prabb, scales = "free_x", space = "free_x")
+
+mobility <-
+ggplot(prov %>%
+           arrange(desc(date_report)),
+         aes(x = days_elapsed, 
+             y = trend,
+             color = doubling_time)) +
+  geom_vline(data = prov %>% filter(from_shutdown == 0),
+             aes(xintercept = days_elapsed),
+             size = 0.5, linetype =2,
+             color = "black") +
+  geom_point() +
+  geom_smooth(method = "locfit",  size = 0.5, color = "black") +
+  scale_color_gradient(low = "tomato3", high = "yellow2", breaks = c(2,7,14,21)) +
+  labs(x = "Days Since 10th Confirmed Case", y = "Residential activity trends") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        panel.border = element_rect(color = "black", fill = "NA")) +
+  facet_grid(.~prabb, scales = "free_x", space = "free_x")
+
+plot_grid(cu,lr,mobility,ncol=1, rel_heights = c(1,1,1.2), align = "v", axis = "b")
+
+ggsave(paste0(covidFigPath, "log_ratio_canada.jpg"), height = 8, width = 11)
+```
