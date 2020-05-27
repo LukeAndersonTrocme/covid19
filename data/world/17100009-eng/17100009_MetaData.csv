@@ -1,0 +1,57 @@
+﻿"Cube Title","Product Id","CANSIM Id",URL,"Cube Notes","Archive Status",Frequency,"Start Reference Period","End Reference Period","Total number of dimensions"
+"Population estimates, quarterly",17100009,051-0005,"https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1710000901",1;2;3;6,"CURRENT - a cube available to the public and that is current",Quarterly,1946-01-01,2020-01-01,1
+
+"Dimension ID","Dimension name","Dimension Notes","Dimension Definitions"
+1,Geography,,
+
+"Dimension ID","Member Name","Classification Code","Member ID","Parent Member ID",Terminated,"Member Notes","Member Definitions"
+1,Canada,[11124],1,,,,
+1,"Newfoundland and Labrador",[10],2,1,,,
+1,"Prince Edward Island",[11],3,1,,,
+1,"Nova Scotia",[12],4,1,,,
+1,"New Brunswick",[13],5,1,,,
+1,Quebec,[24],6,1,,,
+1,Ontario,[35],7,1,,,
+1,Manitoba,[46],8,1,,,
+1,Saskatchewan,[47],9,1,,,
+1,Alberta,[48],10,1,,,
+1,"British Columbia",[59],11,1,,,
+1,Yukon,[60],12,1,,,
+1,"Northwest Territories including Nunavut",,13,1,t,4,
+1,"Northwest Territories",[61],14,1,,5,
+1,Nunavut,[62],15,1,,5,
+
+Symbol Legend
+Description,Symbol
+"not available for a specific reference period",..
+"less than the limit of detection",<LOD
+"value rounded to 0 (zero) where there is a meaningful distinction between true zero and the value that was rounded",0s
+"data quality: excellent",A
+"data quality: very good",B
+"data quality: good",C
+"data quality: acceptable",D
+"use with caution",E
+"too unreliable to be published",F
+"not applicable",...
+preliminary,p
+revised,r
+"suppressed to meet the confidentiality requirements of the Statistics Act",x
+terminated,t
+
+"Survey Code","Survey Name"
+3601,"Quarterly Demographic Estimates"
+
+"Subject Code","Subject Name"
+17,"Population and demography"
+
+"Note ID",Note
+1,"Postcensal estimates are based on the 2016 Census counts adjusted for census net undercoverage (CNU) (including adjustment for incompletely enumerated Indian reserves (IEIR)) and the components of demographic growth that occurred since that census. Intercensal estimates are produced using counts from two consecutive censuses adjusted for CNU (including (IEIR) and postcensal estimates."
+2,"Quarterly population estimates: Quarter I = January 1; Quarter II = April 1; Quarter III = July 1; Quarter IV = October 1."
+3,"Estimates are final intercensal and unadjusted for census net undercoverage prior to July 1, 1971. Estimates are final intercensal from July 1, 1971 to April 1, 2016, final postcensal for July 1, 2016, updated postcensal from October 1, 2016 to April 1, 2019 and preliminary postcensal from July 1, 2019."
+4,"Population estimates for Northwest Territories and Nunavut are presented separately from July 1, 1991."
+5,"Prior to July 1, 1991, only population estimates for Northwest Territories and Nunavut combined are available."
+6,"The population growth, which is used to calculate population estimates, is comprised of the natural growth (Table 17100059), international migration (Table 17100040) and interprovincial migration (Tables 17100020 and 17100045)."
+
+"Correction ID","Correction Date","Correction Note"
+
+

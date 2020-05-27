@@ -164,6 +164,41 @@ label_can <-
   top_n( ., 1, wt = days_elapsed) %>%
   mutate(end_label = prname)
   
+
+dt_can<-
+  ggplot() + 
+  #geom_rect(data = red_rect, 
+  #          aes(xmin=0, xmax=max(prov$max_days),
+  #              ymin=ymin, ymax=ymax, 
+  #              alpha=alpha_gradient, group = 1), size = 1, fill="tomato") +
+  #geom_hline(yintercept = 14, linetype = 2, color = "grey50", size = 0.1) +
+  geom_line(data = prov,
+            aes(x = days_elapsed,
+                y = .fitted,
+                group = prname,
+                color = prname),
+                size = 1.5) +
+  geom_text_repel(data = prov, 
+                  aes(x = days_elapsed,
+                      y = .fitted,
+                      group = prname,
+                      label = end_label)) +
+  scale_y_continuous(trans = reverselog_trans(2), 
+                     breaks = c(2,4, 7,14,28, 56, 112, 224),
+                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months", "8 months"),
+                     limits = c(max(prov$doubling_time),1)) +
+  scale_color_discrete_qualitative()+
+  guides(color = F) +
+  guides(size = F, alpha = F) +
+  labs(x = paste0("Days since ",10,"th reported case"),
+       y = "Doubling time\n(log2 scale)")+
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+
     
 pr_can <-
 ggplot(prov %>%
@@ -183,6 +218,36 @@ ggplot(prov %>%
                   color = "black") +
   labs(y = "Number of Cases per 1000 Tests",
        x = paste("Days Since",10,"Confirmed Cases"))+
+  scale_color_discrete_qualitative() +
+  guides(color = F) +
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+
+cu_can <-
+  ggplot(prov,
+         aes(x = days_elapsed, 
+             y = numtotal,  
+             group = prname,
+             color = prname,
+             label = end_label)) + 
+  geom_line(size = 1.5) + 
+  geom_text_repel(data = label_can,
+                  aes(x = days_elapsed, 
+                      y = numtotal,
+                      group = prname,
+                      label = end_label),
+                  color = "black") +
+  labs(y = "Number of Confirmed Cases",
+       x = paste("Days Since",10,"Confirmed Cases"))+
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
+                     breaks = 2^seq(-2, 15, 1) * 100,
+                     trans = "log2",
+                     limits = c(10, 30000)) +
   scale_color_discrete_qualitative()+
   guides(color = F) +
   theme_minimal() +
@@ -192,6 +257,34 @@ ggplot(prov %>%
         panel.border = element_rect(color = "black", fill = "NA"),
         axis.text = element_text(size = 15),
         axis.title = element_text(size = 15))
+
+
+si_can <-
+  ggplot(prov %>%
+           arrange(date),
+         aes(y = numdeaths / numconf * 1000, 
+             x = numtotal / numtested * 1000,  
+             group = prname,
+             color = prname,
+             label = end_label)) + 
+  geom_path(size = 1.5) + 
+  geom_text_repel(data = label_can,
+                  aes(group = prname,
+                      label = end_label),
+                  color = "black") +
+  labs(y = "Number of Cases per 1000 Tests",
+       x = "Deaths per 1000 Cases")+
+  scale_color_discrete_qualitative()+
+  guides(color = F) +
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+
+plot_grid(cu_can, pr_can, ncol =1, align = "v", axis = "b")
 ```
 
 

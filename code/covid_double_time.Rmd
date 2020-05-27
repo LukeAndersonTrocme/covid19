@@ -39,17 +39,13 @@ covidFigPath <- '~/Documents/covid19/figures/'
 # Load data
 ```{r, warning = F, message = F}
 ##################################################
-# covdata
-# https://github.com/kjhealy/covdata
-##################################################
-drat::addRepo("kjhealy")
-install.packages("covdata")
-library(covdata)
-
-##################################################
 # Coronavirus testing data
 # https://ourworldindata.org/coronavirus
 ##################################################
+data_url <- "https://covid.ourworldindata.org/data/owid-covid-data.csv"
+# Download data
+download.file(data_url, destfile = paste0(covidPath, "owid-covid-data.csv"), quiet = T)
+
 testing <- read.csv(paste0(covidPath,"owid-covid-data.csv")) %>%
   mutate(date = as.Date(date),
          country_region = location)
@@ -84,41 +80,34 @@ mobility_data <-
   mutate(date = as.Date(date))
 
 
+
 ## Countries to highlight
-case_countries <- c("United States","Italy","Canada", "South Korea", "Singapore", "New Zealand", "Japan")
+case_countries <- c("United States","Italy","Canada", "South Korea", "Singapore", "New Zealand", "Japan", "Brazil")
 
 hand_pick <-
-  c("United States","Italy","Canada", "South Korea", "Singapore", "New Zealand", "Iceland","Australia","Austria", "Estonia","Slovenia","Greece", "Malaysia", "Switzerland", "Norway", "Denmark","Ireland","Portugal","Czech Republic", "France", "Germany", "Spain", "Netherlands", "Belgium", "Bahrain", "Finland", "Sweden", "United Kingdom", "Japan")
+  c("United States","Italy","Canada", "South Korea", "Singapore", "New Zealand", "Iceland","Australia","Austria", "Estonia","Slovenia","Greece", "Malaysia", "Switzerland", "Norway", "Denmark","Ireland","Portugal","Czech Republic", "France", "Germany", "Spain", "Netherlands", "Belgium", "Bahrain", "Finland", "Sweden", "United Kingdom", "Japan", "Brazil")
 ```
 
 #Combine and process data
 ```{r}
-case_limit <- 50
+case_limit <- 10
+
 
 covid <-
-  covnat %>%
-  mutate(country_region = recode(cname, `Korea, Republic of` = "South Korea")) %>%
-  inner_join(. ,
+  testing %>%
+  left_join(. ,
              mobility_data,
              by = c("country_region","date")) %>% 
-  inner_join( . ,
-              testing,
-              by = c("country_region","date")) %>%
   left_join( . ,
-              lockdown,
-              by = "country_region") %>%
-  inner_join( . ,
               OxCGRT,
               by = c("country_region","date")) %>%
-  filter(cu_cases >= case_limit) %>%
+  filter(total_cases >= case_limit) %>%
   arrange(date) %>%
   group_by(country_region)%>% 
-  mutate(cases_logratio = tsibble::difference(log(cu_cases)),
-         #cases_logratio = tsibble::difference(log(cu_cases / total_tests)),
+  mutate(cases_logratio = tsibble::difference(log(total_cases)),
          doubling_time = log(2) / cases_logratio,
-         from_shutdown = as.numeric(difftime(date, shutdown_date, units = "days")),
          days_elapsed = as.numeric(date - min(date)),
-         max_case = max(cu_cases, na.rm = T),
+         max_case = max(total_cases, na.rm = T),
          max_tests = max(total_tests_per_thousand, na.rm = T),
          ff = ifelse(country_region %in% case_countries,
                      "bold", "plain"),
@@ -127,34 +116,72 @@ covid <-
          fc = ifelse(country_region %in% case_countries,
                      "black", "grey60"))
 
-covid$country_region <- fct_reorder(covid$country_region, covid$max_case)
 
-#get loess regression line
-covid <-
-  covid %>% 
-  filter(doubling_time < Inf,
-         country_region %in% hand_pick) %>%
+smooth_out <- data.frame()
+for(i in hand_pick) {
+  s <- filter(covid, country_region == i)
+  
+  #s <- filter(covid, country_region == "Canada")
+  days <- seq(min(s$days_elapsed), max(s$days_elapsed))
+  
+  #get smooth
+  smooth <-
+    ggplot(s, 
+           aes(x=days_elapsed, 
+               y = doubling_time))+
+    geom_smooth(method = "loess")+
+    scale_y_continuous(trans = reverselog_trans(2))
+  #extract line from plot
+  
+  extract <-
+    ggplot_build(smooth)$data %>%
+    as.data.frame() %>%
+    mutate(days_elapsed = round(x),
+           dt = 2^-y,
+           country_region = i) %>%
+    dplyr::select(country_region, days_elapsed, dt)
+  
+  #day_rate <- 
+  #  as.data.frame(
+  #    sapply(days, 
+  #           function(kk) #get moments of doubling
+  #             optimize(function(t0) 
+  #               abs(approxfun(extract$days_elapsed,extract$dt)(t0) - kk),
+  #               interval = range(extract$days_elapsed))$minimum))
+  #names(day_rate) <- "smooth"
+
+  
+  smooth_out <-
+    #day_rate %>%
+    #mutate(country_region = paste(i),
+    #       days_elapsed = days) %>%
+    extract %>%
+    rbind(smooth_out, .)
+}
+smooth_out
+
+smoothed <-
+  right_join(smooth_out,
+             covid,
+             by = c("country_region", "days_elapsed")) %>%
   group_by(country_region) %>%
-  do(augment(loess(doubling_time ~ days_elapsed, .))) %>% 
-  inner_join(. , covid,
-             by = c("country_region", "days_elapsed", "doubling_time")) %>%
-  mutate(max_days = max(days_elapsed, na.rm = T),
-         end_label = ifelse(days_elapsed == max_days, 
-                            as.character(country_region), NA))
+  fill(dt, .direction = "down")
+covid
+
 
 dc <-
-  covid %>%
+  out %>%
   group_by(country_region, ff) %>%
-  mutate(bad_day = ifelse(.fitted < 14, 1, 0)) %>%
+  mutate(bad_day = ifelse(smooth < 7, 1, 0)) %>%
   dplyr::summarise(tests = max(total_tests_per_thousand, na.rm = T),
-                   death = max(cu_deaths),
+                   death = max(total_deaths),
                    sum_bad = sum(bad_day))
 
-covid
-dc
+subset <- 
+  smoothed %>%
+  filter(country_region %in% case_countries)
 
-subset <- covid %>%
-           filter(country_region %in% case_countries)
+subset$country_region <- fct_reorder(subset$country_region, subset$max_case)
 ```
 
 #Fancy plotting tid bits 
@@ -171,7 +198,7 @@ for (country in unique(subset$country_region)) {
       as.Date(sapply(doubled_counts, 
                      function(kk) #get moments of doubling
                        optimize(function(t0) 
-                         abs(approxfun(df$date, df$cu_cases)(t0) - kk),
+                         abs(approxfun(df$date, df$total_cases)(t0) - kk),
                          interval = range(df$date))$minimum), 
               origin = "1970-01-01"))
   names(double_time) <- "doubling_time"
@@ -179,17 +206,17 @@ for (country in unique(subset$country_region)) {
   double_times <-
     double_time %>%
     mutate(country_region = paste(country),
-           cu_cases = doubled_counts,
-           lag_cu_cases = lag(cu_cases),
+           total_cases = doubled_counts,
+           lag_total_cases = lag(total_cases),
            lag_doubling_time = lag(doubling_time),
            time = round(doubling_time - lag_doubling_time)) %>%
     distinct(doubling_time, .keep_all = TRUE) %>%
-    filter(cu_cases <= max(df$cu_cases)) %>%
+    filter(total_cases <= max(df$total_cases)) %>%
     rbind(double_times, .) 
 }
 
 double_times$country_region <- 
-  factor(double_times$country_region, levels = levels(covid$country_region))
+  factor(double_times$country_region, levels = levels(subset$country_region))
 
 ## rescale doubling time to reverse
 #https://stackoverflow.com/questions/11053899/how-to-get-a-reversed-log10-scale-in-ggplot2
@@ -204,14 +231,26 @@ reverselog_trans <- function(base = exp(1)) {
 
 
 n_steps <- 100
-alpha_gradient <- seq(from = 0.00001, to = 0, length.out = n_steps)
-y_steps <- seq(from = -2, to = 14, length.out = n_steps + 1)
+alpha_gradient <- seq(from = 0.3, to = 0.001, length.out = n_steps)
+y_steps <- seq(from = 0, to = 7, length.out = n_steps + 1)
 
 red_rect <- data.frame(ymin = y_steps[-(n_steps + 1)], 
                             ymax = y_steps[-1],
                             days_elapsed = 0,
                             doubling_time = 0,
                             alpha_gradient = alpha_gradient)
+
+red_rect <- data.frame(ymin = y_steps[-(n_steps + 1)], 
+                            ymax = y_steps[-1],
+                            days_elapsed = 0,
+                            doubling_time = 0,
+                            alpha_gradient = alpha_gradient)
+
+
+
+ covid %>% filter(country_region == "Japan") %>% dplyr::select(country_region, days_elapsed, doubling_time) 
+
+ out %>% filter(country_region  == "Japan") %>% dplyr::select(country_region, days_elapsed, smooth, doubling_time) %>% filter(smooth <= 7)
 ```
 
 
@@ -221,34 +260,33 @@ red_rect <- data.frame(ymin = y_steps[-(n_steps + 1)],
 cu<-
   ggplot(subset,
          aes(x = date, 
-             y = cu_cases,  
+             y = total_cases,  
              group = country_region)) + 
   #geom_vline(data = double_times,
   #           aes(xintercept = doubling_time,
   #               group = country_region), linetype = 1, color = "grey80") +
   geom_vline(data = subset %>%
-               filter(.fitted <= 14,
-                      .fitted > 1),
+               filter(dt <=7 ), 
              aes(xintercept = date,
                  group = country_region, 
-                 alpha = 1/.fitted), linetype = 1, color = "tomato", size = 4) +
+                 alpha = 2^-dt), linetype = 1, color = "tomato", size = 0.65) +
   geom_segment(data = double_times,
                mapping = aes(x = lag_doubling_time,
                              xend = doubling_time,
-                             y = cu_cases,
-                             yend = cu_cases),
+                             y = total_cases,
+                             yend = total_cases),
                color = "black",
                size = 0.5) +
   geom_segment(data = double_times,
                mapping = aes(x = lag_doubling_time,
                              xend = lag_doubling_time,
-                             y = lag_cu_cases,
-                             yend = cu_cases),
+                             y = lag_total_cases,
+                             yend = total_cases),
                color = "black",
                size = 0.5) +
-  geom_line(size = 1) + 
+  geom_line(size = 0.5) + 
   geom_line(data = subset,
-            aes(y = cu_deaths),
+            aes(y = total_deaths),
             color = "black",
             linetype = 3,
             size = 0.5) +
@@ -257,25 +295,16 @@ cu<-
             color = "black",
             size = 0.5,
             linetype = 2) +
-  geom_point(data = subset %>% 
-               filter(from_shutdown == 0),
-             aes(x = date,
-                 y = cu_cases), 
-             size = 3,
-             shape = 21,
-             fill = "yellow") +
-  scale_alpha_continuous(range = c(0.001,0.2), trans = "log10") +
+  #scale_alpha_continuous(range = c(0.3,0.01), trans = "log2") +
   guides(alpha = F) +
   scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
-                     breaks = 2^seq(-2, 15, 1) * 100,
+                     breaks = 2^seq(-3, 15, 1) * 100,
                      trans = "log2",
                      limits = c(10, 10000000)) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b")+
-  ylab("Cumulative Cases\n(log2 scale)")+
+  ylab("Cumulative Counts\n(log2 scale)")+
   theme_minimal() +
   theme(axis.title.x = element_blank(),
-        panel.grid.minor.x = element_blank(),
-        panel.grid.major.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
         axis.text = element_text(size = 15),
@@ -295,34 +324,26 @@ lr <-
   #           aes(xintercept = doubling_time,
   #               group = country_region), linetype = 1, color = "grey80") +
   geom_vline(data = subset %>%
-               filter(.fitted <= 14,
-                      .fitted > 1),
+               filter(dt <=7 ), 
              aes(xintercept = date,
                  group = country_region, 
-                 alpha = 1/.fitted), linetype = 1, color = "tomato", size = 4) +
+                 alpha = 2^-dt), linetype = 1, color = "tomato", size = 0.65) +
+  geom_hline(yintercept = 7, linetype = 2, color = "grey50", size = 0.1) +
   geom_point(size = 0.2) +
-  #geom_smooth(method = "loess", se = FALSE, color = "black", size = 1) +
-  geom_line(data = subset,
-            aes(x = date,
-                y = .fitted)) +
-  geom_point(data = subset %>%
-               filter(from_shutdown == 0),
-             aes(x = date,
-                 y = .fitted), 
-             size = 3,
-             shape = 21,
-             fill = "yellow") +
-  scale_alpha_continuous(range = c(0.001,0.2), trans = "log10") +
+  geom_smooth(method = "loess", se = FALSE, color = "black", size = 0.5) +
+  #geom_line(data = subset,
+  #          aes(x = date,
+  #              y = smooth),
+  #          size = 0.5) +
+  #scale_alpha_continuous(range = c(0.3,0.01), trans = "log2") +
   guides(alpha = F) +
   scale_y_continuous(trans = reverselog_trans(2), 
-                     breaks = c(2,4, 7,14,28, 56, 112),
-                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months")) +
+                     breaks = c(2,4, 7,14,28, 56, 112, 365),
+                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months", "1 year")) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b")+
-  ylab("Doubling Time\n(log2 scale)")+
+  ylab("Doubling Rate\n(log2 scale)")+
   theme_minimal() +
   theme(axis.title.x = element_blank(),
-        panel.grid.minor.x = element_blank(),
-        panel.grid.major.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
         axis.text = element_text(size = 15),
@@ -331,14 +352,6 @@ lr <-
         strip.text = element_text(size = 15,
                                   face = "bold")) +
   facet_grid(.~country_region, scales = "free_x", space = "free_x")
-
-mob_lab <-
-  subset %>% 
-  group_by(country_region) %>%
-  do(augment(loess(residential_percent_change_from_baseline ~ from_shutdown, .))) %>% 
-  inner_join(. , subset %>% dplyr::select(country_region, date, from_shutdown),
-             by = c("country_region", "from_shutdown")) %>%
-  filter(from_shutdown == 0)
 
 mob <-
   ggplot(subset,
@@ -349,29 +362,22 @@ mob <-
   #           aes(xintercept = doubling_time,
   #               group = country_region), linetype = 1, color = "grey80") +
   geom_vline(data = subset %>%
-               filter(.fitted <= 14,
-                      .fitted > 1),
+               filter(dt <=7 ), 
              aes(xintercept = date,
                  group = country_region, 
-                 alpha = 1/.fitted), linetype = 1, color = "tomato", size = 4) +
+                 alpha = 2^-dt), linetype = 1, color = "tomato", size = 0.65) +
   geom_point(size = 0.2) +
-  geom_smooth(method = "loess", se = FALSE, color = "black", size = 1) + 
-  geom_point(data = mob_lab,
-             aes(x = date,
-                 y = .fitted), 
-             size = 3,
-             shape = 21,
-             fill = "yellow") +
+  geom_smooth(method = "loess", se = FALSE, color = "black", size = 0.5) +
   geom_line(aes(x = date,
-                y = StringencyIndex)) +
-  scale_alpha_continuous(range = c(0.001,0.2), trans = "log10") +
+                y = StringencyIndex),
+            color = "grey50",
+            size = 1) +
+  #scale_alpha_continuous(range = c(0.3,0.01), trans = "log2") +
   guides(alpha = F) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b")+
-  labs(x = "Date", y = "Residential Mobility Trends\n(% change from baseline)") +
+  labs(x = "Date", y = "Policy and Mobility Trends (%)") +
   theme_minimal() +
   theme(legend.position = "bottom",
-        panel.grid.minor.x = element_blank(),
-        panel.grid.major.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
         axis.text = element_text(size = 15),
@@ -395,24 +401,24 @@ spp<-
             aes(xmin=0, xmax=max(covid$max_days),
                 ymin=ymin, ymax=ymax, 
                 alpha=alpha_gradient, group = 1), size = 1, fill="tomato") +
-  geom_hline(yintercept = 14, linetype = 2, color = "grey50", size = 0.1) +
+  geom_hline(yintercept = 7, linetype = 2, color = "grey50", size = 0.1) +
   geom_line(data = covid %>%
               filter(!country_region %in% case_countries),
             aes(x = days_elapsed,
-                y = .fitted,
+                y = smooth,
                 size = ff,
                 group = country_region),
             color = "grey60") +
   geom_line(data = covid %>%
               filter(country_region %in% case_countries),
             aes(x = days_elapsed,
-                y = .fitted,
+                y = smooth,
                 size = ff,
                 group = country_region),
             color = "black") +
   geom_text_repel(data = covid, 
                   aes(x = days_elapsed,
-                      y = .fitted,
+                      y = smooth,
                       size = fs,
                       group = country_region,
                       fontface = ff,
@@ -425,7 +431,7 @@ spp<-
   scale_color_identity() +
   guides(size = F, alpha = F) +
   labs(x = paste0("Days since ",case_limit,"th reported case"),
-       y = "Doubling time\n(log2 scale)")+
+       y = "Doubling Rate\n(log2 scale)")+
   theme_minimal() +
   theme(panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank(),
@@ -438,14 +444,13 @@ dcc <-
 ggplot(dc %>% filter(country_region %in% hand_pick),
        aes(x = sum_bad,
            y = death,
-           label = country_region,
-           size = tests)) +
+           label = country_region)) +
   geom_point(alpha = 0.3) +
   geom_point(data = dc %>% 
                filter(tests == -Inf),
              size = 1,
              shape = 2) +
-labs(x = "Days of Uncontrolled Spread",
+labs(x = "Days of uncontrolled spread",
      y = "Total COVID-19 deaths\n(log2 scale)") +
   scale_size_area(max_size = 14, 
                   breaks = c(10,20,40,80,100),
@@ -524,38 +529,30 @@ ggplot(subset %>%
 plot_grid(pr, spp, dcc, nrow = 1, align = "h", axis = "l", rel_widths = c(1,1,1.3))
 
 
-pr <-
-ggplot(subset %>%
-         filter(country_region != "Singapore",
-                is.na(total_cases / total_tests) == F),
-       aes(x = .fitted, 
-           y = total_cases / total_tests * 1000,  
-           group = country_region,
-           color = country_region,
-           label = end_label)) + 
-  geom_smooth(data = covid %>%
-                filter(!country_region %in% case_countries,
-                       is.na(total_cases / total_tests) == F,
-                       log2(.fitted) > 1),
-              aes(x = .fitted, 
-                  y = total_cases / total_tests * 1000,  
-                  group = country_region),
-              method = "locfit", size = 1.5, se = F,
-              color = "grey60") +
-  scale_x_continuous(trans = "log2",
-                     breaks = c(2,4, 7,14,28, 56, 112, 224),
-                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months", "8 months"),
-                     limits = c(1,max(covid$doubling_time))) +
-  geom_smooth(mehtod = "locfit",size = 1.5, se = F) + 
-  geom_text_repel(data = label2,
-                  aes(x = .fitted, 
-                      y = total_cases / total_tests * 1000,
+cu_w <-
+  ggplot(subset %>%
+           filter(country_region != "Singapore",
+                  is.na(total_cases / total_tests) == F),
+         aes(x = days_elapsed, 
+             y = total_cases,  
+             group = country_region,
+             color = country_region,
+             label = end_label)) + 
+  geom_line(size = 1) +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
+                     breaks = 2^seq(-2, 15, 1) * 100,
+                     trans = "log2",
+                     limits = c(50, 1000000)) +
+  geom_text_repel(data = label2 %>%
+                    filter(country_region %in% case_countries),
+                  aes(x = days_elapsed, 
+                      y = total_cases,
                       group = country_region,
                       fontface = ff,
                       label = end_label),
                   color = "black") +
-  labs(y = "Number of Cases per 1000 Tests",
-       x = "Doubling Time")+
+  labs(y = "Cumulative Number of Confirmed Cases",
+       x = paste("Days Since",case_limit,"Confirmed Cases"))+
   scale_color_discrete_qualitative()+
   guides(color = F) +
   theme_minimal() +
@@ -563,38 +560,43 @@ ggplot(subset %>%
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
         axis.text.y = element_text(size = 15),
-        axis.text.x = element_text(size = 15, angle = 70, vjust = 0.5),
+        axis.text.x = element_text(size = 15),
         axis.title = element_text(size = 15))
-```
 
-
-```{r}
-dual_axes <-
-  ggplot(subset,
-         aes(x = date,
-             group = country_region)) +
-  geom_smooth(aes(y = residential_percent_change_from_baseline,
-                  color = "Residential % change from baseline"),
-              method = "loess", se = FALSE, size = 1) +
-  geom_step(aes(y = StringencyIndex, color = "Stringency Index"), size = 1.5) +
-  geom_line(aes(y = log2(.fitted) * 10, color = "Doubling Time"), size = 1.5) +
-  scale_y_continuous(sec.axis = sec_axis(~./10, name = "Doubling Time (Log 2)")) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b")+
-  scale_color_manual(values = c("blue","black",  "red"), name = "") +
-  labs(x = "Date", y = "Stringency Index (%)") +
+pr_w <-
+  ggplot(subset %>%
+           filter(country_region != "Singapore",
+                  country_region %in% case_countries,
+                  is.na(total_cases / total_tests) == F),
+         aes(x = days_elapsed, 
+             y = total_cases / total_tests * 1000,  
+             group = country_region,
+             color = country_region,
+             label = end_label)) + 
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "locfit",size = 1, se = F) + 
+  geom_text_repel(data = label2%>%
+                    filter(country_region %in% case_countries),
+                  aes(x = days_elapsed, 
+                      y = total_cases / total_tests * 1000,
+                      group = country_region,
+                      fontface = ff,
+                      label = end_label),
+                  color = "black") +
+  labs(y = "Number of Cases per 1000 Tests",
+       x = paste("Days Since",case_limit,"Confirmed Cases"))+
+  scale_color_discrete_qualitative()+
+  guides(color = F) +
   theme_minimal() +
-  theme(legend.position = "bottom",
-        panel.grid.minor.x = element_blank(),
+  theme(panel.grid.minor.x = element_blank(),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
         axis.text = element_text(size = 15),
-        axis.title = element_text(size = 15),
-        legend.text = element_text(size = 15),
-        strip.text = element_text(size = 15,
-                                  face = "bold")) +
-  facet_grid(.~country_region, scales = "free_x", space = "free_x")
+        axis.title = element_text(size = 15))
 
 
-dual_axes
+plot_grid(cu_w, pr_w, ncol =1, align = "v", axis = "b")
+
 ```
+
