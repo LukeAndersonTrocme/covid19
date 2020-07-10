@@ -1,6 +1,6 @@
 # Visualizing the Covid-19 pandemic with doubling rates
 
-In this github repository we provide the methods, data and R scripts necessary to reproduce our work published in Significance magazine.  https://www.significancemagazine.com/science/676-visualizing-the-covid-19-pandemic-with-doubling-rates
+In this github repository we provide the methods, data and R scripts necessary to reproduce our work published in [Significance](https://www.significancemagazine.com/science/676-visualizing-the-covid-19-pandemic-with-doubling-rates).
 
 ![Doubling_rate](https://github.com/LukeAndersonTrocme/covid19-doubling-rates/blob/master/figures/figure1.jpg?raw=true)
 
