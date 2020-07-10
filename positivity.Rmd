@@ -1,0 +1,125 @@
+
+#positive rate
+```{r}
+label2 <- 
+  covid %>%
+  filter(is.na(total_tests) == F,
+         is.na(total_cases) == F,
+         country_region != "Singapore") %>%
+  group_by(country_region) %>%
+  top_n( ., 1, wt = days_elapsed) %>%
+  mutate(end_label = country_region)
+  
+    
+pr <-
+ggplot(subset %>%
+         filter(country_region != "Singapore",
+                is.na(total_cases / total_tests) == F),
+       aes(x = days_elapsed, 
+           y = total_cases / total_tests * 1000,  
+           group = country_region,
+           color = country_region,
+           label = end_label)) + 
+  geom_smooth(data = covid %>%
+                filter(!country_region %in% case_countries,
+                       is.na(total_cases / total_tests) == F),
+              aes(x = days_elapsed, 
+                  y = total_cases / total_tests * 1000,  
+                  group = country_region),
+              method = "locfit", size = 1.5, se = F,
+              color = "grey60") +
+  #geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(mehtod = "locfit",size = 1.5, se = F) + 
+  geom_text_repel(data = label2,
+                  aes(x = days_elapsed, 
+                      y = total_cases / total_tests * 1000,
+                      group = country_region,
+                      fontface = ff,
+                      label = end_label),
+                  color = "black") +
+  labs(y = "Number of Cases per 1000 Tests",
+       x = paste("Days Since",case_limit,"Confirmed Cases"))+
+  scale_color_discrete_qualitative()+
+  guides(color = F) +
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 25))
+
+plot_grid(pr, spp, dcc, nrow = 1, align = "h", axis = "l", rel_widths = c(1,1,1.3))
+
+
+cu_w <-
+  ggplot(subset %>%
+           filter(country_region != "Singapore",
+                  is.na(total_cases / total_tests) == F),
+         aes(x = days_elapsed, 
+             y = total_cases,  
+             group = country_region,
+             color = country_region,
+             label = end_label)) + 
+  geom_line(size = 1) +
+  scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
+                     breaks = 2^seq(-2, 15, 1) * 100,
+                     trans = "log2",
+                     limits = c(50, 1000000)) +
+  geom_text_repel(data = label2 %>%
+                    filter(country_region %in% case_countries),
+                  aes(x = days_elapsed, 
+                      y = total_cases,
+                      group = country_region,
+                      fontface = ff,
+                      label = end_label),
+                  color = "black") +
+  labs(y = "Cumulative Number of Confirmed Cases",
+       x = paste("Days Since",case_limit,"Confirmed Cases"))+
+  scale_color_discrete_qualitative()+
+  guides(color = F) +
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text.y = element_text(size = 25),
+        axis.text.x = element_text(size = 25),
+        axis.title = element_text(size = 25))
+
+pr_w <-
+  ggplot(subset %>%
+           filter(country_region != "Singapore",
+                  country_region %in% case_countries,
+                  is.na(total_cases / total_tests) == F),
+         aes(x = days_elapsed, 
+             y = total_cases / total_tests * 1000,  
+             group = country_region,
+             color = country_region,
+             label = end_label)) + 
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "locfit",size = 1, se = F) + 
+  geom_text_repel(data = label2%>%
+                    filter(country_region %in% case_countries),
+                  aes(x = days_elapsed, 
+                      y = total_cases / total_tests * 1000,
+                      group = country_region,
+                      fontface = ff,
+                      label = end_label),
+                  color = "black") +
+  labs(y = "Number of Cases per 1000 Tests",
+       x = paste("Days Since",case_limit,"Confirmed Cases"))+
+  scale_color_discrete_qualitative()+
+  guides(color = F) +
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border = element_rect(color = "black", fill = "NA"),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 25))
+
+
+plot_grid(cu_w, pr_w, ncol =1, align = "v", axis = "b")
+
+```
+
