@@ -67,10 +67,10 @@ https://data.ontario.ca/dataset/confirmed-positive-cases-of-covid-19-in-ontario/
 https://www.quebec.ca/en/health/health-issues/a-z/2019-coronavirus/situation-coronavirus-in-quebec/
 
 ## About Me :
-I am a PhD Student at McGill University studying Statistical Population Genomics. Always interested in collaborating on (un)related projects.
+I am a PhD candidate at McGill University studying Statistical Population Genomics. Always interested in collaborating on (un)related projects.
 
 Linked In : https://www.linkedin.com/in/luke-anderson-trocme/
 
 Twitter : https://twitter.com/LukeAnderTroc
 
-I am not an epidemiologist or a doctor, please be diligent about conclusions drawn from these figures.
+Note : I am not an epidemiologist or a doctor, please be diligent about conclusions drawn from these figures.
