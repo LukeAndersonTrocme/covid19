@@ -4,9 +4,9 @@ In this github repository we provide the methods, data and R scripts necessary t
 
 ![Doubling_rate](https://github.com/LukeAndersonTrocme/covid19-doubling-rates/blob/master/figures/figure1.jpg?raw=true)
 
-# TL;DR
+### TL;DR
 
-To reproduce this figure, clone this repository and run the covid_double_time.Rmd R script.
+To reproduce this figure, clone this repository and run the [covid_double_time.Rmd](https://github.com/LukeAndersonTrocme/covid19/blob/master/code/covid_double_time.Rmd) R script.
 
 # Methods 
 
@@ -24,7 +24,7 @@ To measure how the number of new reported cases changes over time we use a const
 
 ## Acknowledgements 
 
-We would like to thank SG, SS, SRC, CF and IK for their discussions and comments on early drafts of this article. 
+We would like to thank Simon Gravel, Sahar Saeed, Sandra Reiter-Campeau, Chaimaa Fadil and Ivan Krukov for their discussions and comments on early drafts of this article. 
 
 
 ## References
