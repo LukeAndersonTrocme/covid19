@@ -14,7 +14,7 @@ International Coronavirus testing results are from Our World in Data (Max Roser 
 
 The government policy stringency index is from the Oxford Coronavirus Government Response Tracker (Hale and Kira, 2020). This project tracks government responses to the Coronavirus pandemic using publicly available indicators like school closures and restrictions in movement. 
 
-Mobility trends are from the Google Mobility Reports. The data used in this article were downloaded on May 26th 2020. Google releases aggregated mobility data from countries on a regular basis. These metrics report changes in movement trends for a number of categories like workplace and residential activity. We limited our analysis to residential activity to provide some insight to how policy translate into changes in behaviours (Figure 1C). 
+Mobility trends are from the Google Mobility Reports. The data used in this article were downloaded on July 10th 2020. Google releases aggregated mobility data from countries on a regular basis. These metrics report changes in movement trends for a number of categories like workplace and residential activity. We limited our analysis to residential activity to provide some insight to how policy translate into changes in behaviours (Figure 1C). 
 
 To measure how the number of new reported cases changes over time we use a constant growth model. While the true nature of the growth dynamics of a viral outbreak are complex, simple models often provide useful approximations. We used the change in cumulative confirmed cases over time to measure the growth rate and doubling rates (Figure 1B). Where the growth rate is the percent chance in daily cases and doubling rate is the number of days for the number of confirmed infections to double in size. 
 
