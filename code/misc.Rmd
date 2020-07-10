@@ -1,0 +1,65 @@
+#Combine and process data
+```{r}
+case_limit <- 50
+
+covid <-
+  covnat %>%
+  mutate(country_region = recode(cname, `Korea, Republic of` = "South Korea")) %>%
+  inner_join(. ,
+             mobility_data,
+             by = c("country_region","date")) %>% 
+  inner_join( . ,
+              testing,
+              by = c("country_region","date")) %>%
+  left_join( . ,
+              lockdown,
+              by = "country_region") %>%
+  inner_join( . ,
+              OxCGRT,
+              by = c("country_region","date")) %>%
+  filter(cu_cases >= case_limit) %>%
+  arrange(date) %>%
+  group_by(country_region)%>% 
+  mutate(cases_logratio = tsibble::difference(log(cu_cases)),
+         #cases_logratio = tsibble::difference(log(cu_cases / total_tests)),
+         doubling_time = log(2) / cases_logratio,
+         from_shutdown = as.numeric(difftime(date, shutdown_date, units = "days")),
+         days_elapsed = as.numeric(date - min(date)),
+         max_case = max(cu_cases, na.rm = T),
+         max_tests = max(total_tests_per_thousand, na.rm = T),
+         ff = ifelse(country_region %in% case_countries,
+                     "bold", "plain"),
+         fs = ifelse(country_region %in% case_countries,
+                     "1.5", "0.5"),
+         fc = ifelse(country_region %in% case_countries,
+                     "black", "grey60"))
+
+covid$country_region <- fct_reorder(covid$country_region, covid$max_case)
+
+#get loess regression line
+covid <-
+  covid %>% 
+  filter(doubling_time < Inf,
+         country_region %in% hand_pick) %>%
+  group_by(country_region) %>%
+  do(augment(loess(doubling_time ~ days_elapsed, .))) %>% 
+  inner_join(. , covid,
+             by = c("country_region", "days_elapsed", "doubling_time")) %>%
+  mutate(max_days = max(days_elapsed, na.rm = T),
+         end_label = ifelse(days_elapsed == max_days, 
+                            as.character(country_region), NA))
+
+dc <-
+  covid %>%
+  group_by(country_region, ff) %>%
+  mutate(bad_day = ifelse(.fitted < 14, 1, 0)) %>%
+  dplyr::summarise(tests = max(total_tests_per_thousand, na.rm = T),
+                   death = max(cu_deaths),
+                   sum_bad = sum(bad_day))
+
+covid
+dc
+
+subset <- covid %>%
+           filter(country_region %in% case_countries)
+```

@@ -1,5 +1,5 @@
 ---
-title: "Covid Log Ratio"
+title: "Covid Doubling Rate"
 author:
 - name: Luke Anderson-Trocmé,
   affiliation:
@@ -31,10 +31,21 @@ pacman::p_load(colorspace)
 pacman::p_load(ggthemes)
 pacman::p_load(locfit)
 pacman::p_load(zoo)
-
+pacman::p_load(scales)
 #Set Path
 covidPath <- '~/Documents/covid19/data/world/'
 covidFigPath <- '~/Documents/covid19/figures/'
+
+## rescale doubling time to reverse
+#https://stackoverflow.com/questions/11053899/how-to-get-a-reversed-log10-scale-in-ggplot2
+
+reverselog_trans <- function(base = exp(1)) {
+  trans <- function(x) -log(x, base)
+  inv <- function(x) base^(-x)
+  trans_new(paste0("reverselog-", format(base)), trans, inv, 
+            log_breaks(base = base), 
+            domain = c(1e-100, Inf))
+}
 ```
 # Load data
 ```{r, warning = F, message = F}
@@ -63,15 +74,11 @@ OxCGRT <- read.csv(paste0(covidPath, "OxCGRT_latest.csv"))%>%
   mutate(date  = as.Date(as.character(Date),format="%Y%m%d")) %>%
   rename(country_region = CountryName)
 
-##################################################
-# Government policy implementation date (Wikipedia)
-##################################################
-lockdown <- read.csv(paste0(covidPath,"lockdown.csv"), 
-                     colClasses = c("character","Date","Date"))
 
 ##################################################
 # Google mobility trends
 # https://www.google.com/covid19/mobility/
+# NOTE: you'll have to download this csv yourself
 ##################################################
 mobility_data <- 
   fread(paste0(covidPath, "Global_Mobility_Report.csv"), sep = ",", header = T) %>%
@@ -82,8 +89,8 @@ mobility_data <-
 
 
 ## Countries to highlight
-case_countries <- c("United States","Italy","Canada", "South Korea", "Singapore", "New Zealand", "Japan", "Brazil")
-
+#case_countries <- c("United States","Italy","Canada", "South Korea", "Singapore", "New Zealand", "Japan", "Brazil")
+case_countries <- c("India","Australia","Greece", "Malaysia", "Bahrain", "United Kingdom", "Sweden", "Finland")
 hand_pick <-
   c("United States","Italy","Canada", "South Korea", "Singapore", "New Zealand", "Iceland","Australia","Austria", "Estonia","Slovenia","Greece", "Malaysia", "Switzerland", "Norway", "Denmark","Ireland","Portugal","Czech Republic", "France", "Germany", "Spain", "Netherlands", "Belgium", "Bahrain", "Finland", "Sweden", "United Kingdom", "Japan", "Brazil")
 ```
@@ -106,6 +113,7 @@ covid <-
   group_by(country_region)%>% 
   mutate(cases_logratio = tsibble::difference(log(total_cases)),
          doubling_time = log(2) / cases_logratio,
+         doubling_time = ifelse(date == min(date), 0, doubling_time),
          days_elapsed = as.numeric(date - min(date)),
          max_case = max(total_cases, na.rm = T),
          max_tests = max(total_tests_per_thousand, na.rm = T),
@@ -152,11 +160,10 @@ for(i in unique(covid$country_region)) {
     rbind(smooth_out, .)
   }
 }
-smooth_out
 
 smoothed <-
-  right_join(smooth_out,
-             covid,
+  full_join(covid,
+             smooth_out,
              by = c("country_region", "days_elapsed")) %>%
   group_by(country_region) %>%
   fill(dt, .direction = "down") %>%
@@ -175,7 +182,8 @@ dc <-
 
 subset <- 
   smoothed %>%
-  filter(country_region %in% case_countries)
+  filter(country_region %in% case_countries,
+         !is.na(doubling_time))
 
 subset$country_region <- fct_reorder(subset$country_region, subset$max_case)
 ```
@@ -214,17 +222,6 @@ for (country in unique(subset$country_region)) {
 double_times$country_region <- 
   factor(double_times$country_region, levels = levels(subset$country_region))
 
-## rescale doubling time to reverse
-#https://stackoverflow.com/questions/11053899/how-to-get-a-reversed-log10-scale-in-ggplot2
-library("scales")
-reverselog_trans <- function(base = exp(1)) {
-  trans <- function(x) -log(x, base)
-  inv <- function(x) base^(-x)
-  trans_new(paste0("reverselog-", format(base)), trans, inv, 
-            log_breaks(base = base), 
-            domain = c(1e-100, Inf))
-}
-
 
 n_steps <- 100
 alpha_gradient <- seq(from = 0.3, to = 0.001, length.out = n_steps)
@@ -251,6 +248,9 @@ red_rect <- data.frame(ymin = y_steps[-(n_steps + 1)],
 
 # Figure 1
 ```{r}
+
+max_dt <- max(subset[which(subset$doubling_time<Inf),]$doubling_time)
+
 cu<-
   ggplot(subset,
          aes(x = date, 
@@ -264,56 +264,63 @@ cu<-
              aes(xintercept = date,
                  group = country_region, 
                  alpha = 2^-dt), linetype = 1, color = "tomato", size = 0.83) +
+  
   geom_segment(data = double_times,
                mapping = aes(x = lag_doubling_time,
                              xend = doubling_time,
                              y = total_cases,
                              yend = total_cases),
                color = "black",
-               size = 0.5) +
+               size = 0.9) +
   geom_segment(data = double_times,
                mapping = aes(x = lag_doubling_time,
                              xend = lag_doubling_time,
                              y = lag_total_cases,
                              yend = total_cases),
                color = "black",
-               size = 0.5) +
-  geom_line(size = 0.5) + 
-  geom_line(data = subset,
+               size = 0.9) +
+  geom_line(size = 0.9) + 
+  geom_line(data = subset %>% filter(total_deaths > 0),
             aes(y = total_deaths),
             color = "black",
             linetype = 3,
-            size = 0.5) +
+            size = 0.9) +
   geom_line(data = subset,
             aes(y = total_tests),
             color = "black",
-            size = 0.5,
+            size = 0.9,
             linetype = 2) +
   scale_alpha_continuous(range = c(0.1,0.9)) +
   guides(alpha = F) +
   scale_y_continuous(labels = scales::comma_format(accuracy = 1), 
-                     breaks = 2^seq(-2, 17, 1) * 100,
+                     breaks = 2^seq(-2, 18, 2) * 100,
                      trans = "log2",
-                     limits = c(10, 10000000)) +
+                     limits = c(10, 50000000)) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b")+
   ylab("Cumulative Counts\n(log2 scale)")+
   theme_minimal() +
   theme(axis.title.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
-        axis.text = element_text(size = 15),
-        axis.title = element_text(size = 15),
-        legend.text = element_text(size = 15),
-        strip.text = element_text(size = 15,
-                                  face = "bold")) +
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 25),
+        legend.text = element_text(size = 25),
+        strip.text = element_text(size = 25,
+                                  face = "bold"),
+        panel.spacing.x = unit(10, "mm")) +
   facet_grid(.~country_region, scales = "free_x", space = "free_x")
 
 
 lr <-
-  ggplot(subset,
+  ggplot(subset %>%
+           filter(doubling_time < Inf),
          aes(x = date, 
              y = doubling_time, 
              group = country_region)) + 
+  geom_hline(yintercept = 2, linetype = 1, color = "grey80", size = 0.7) +
+  geom_hline(yintercept = 30, linetype = 1, color = "grey80", size = 0.7) +
+  geom_hline(yintercept = 120, linetype = 1, color = "grey80", size = 0.7) +
+  geom_hline(yintercept = 365, linetype = 1, color = "grey80", size = 0.7) +
   #geom_vline(data = double_times,
   #           aes(xintercept = doubling_time,
   #               group = country_region), linetype = 1, color = "grey80") +
@@ -322,29 +329,31 @@ lr <-
              aes(xintercept = date,
                  group = country_region, 
                  alpha = 2^-dt), linetype = 1, color = "tomato", size = 0.83) +
-  geom_hline(yintercept = 7, linetype = 2, color = "grey50", size = 0.5) +
+  geom_hline(yintercept = 7, linetype = 2, color = "grey50", size = 0.9) +
   geom_point(size = 0.2) +
-  geom_smooth(method = "loess", se = FALSE, color = "black", size = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "black", size = 0.9) +
   #geom_line(data = subset,
   #          aes(x = date,
   #              y = smooth),
-  #          size = 0.5) +
+  #          size = 0.9) +
   scale_alpha_continuous(range = c(0.1,0.9)) +
   guides(alpha = F) +
   scale_y_continuous(trans = reverselog_trans(2), 
-                     breaks = c(2,4, 7,14,28, 56, 112, 365),
-                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months", "1 year")) +
+                     breaks = c(1,2, 7,14,30, 60, 120, 365, 730),
+                     labels = c("1 day", "2 days", "1 week", "2 weeks", "1 month", "2 months", "4 months", "1 year", "2 years"),
+                     limits = c(max_dt,1)) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b")+
   ylab("Doubling Rate\n(log2 scale)")+
   theme_minimal() +
   theme(axis.title.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
-        axis.text = element_text(size = 15),
-        axis.title = element_text(size = 15),
-        legend.text = element_text(size = 15),
-        strip.text = element_text(size = 15,
-                                  face = "bold")) +
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 25),
+        legend.text = element_text(size = 25),
+        strip.text = element_text(size = 25,
+                                  face = "bold"),
+        panel.spacing.x = unit(10, "mm")) +
   facet_grid(.~country_region, scales = "free_x", space = "free_x")
 
 mob <-
@@ -361,7 +370,7 @@ mob <-
                  group = country_region, 
                  alpha = 2^-dt), linetype = 1, color = "tomato", size = 0.83) +
   geom_point(size = 0.2) +
-  geom_smooth(method = "loess", se = FALSE, color = "black", size = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "black", size = 0.9) +
   geom_line(aes(x = date,
                 y = StringencyIndex),
             color = "grey50",
@@ -369,22 +378,23 @@ mob <-
   scale_alpha_continuous(range = c(0.1,0.9)) +
   guides(alpha = F) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b")+
-  labs(x = "Date", y = "Policy and Mobility Trends (%)") +
+  labs(x = "Date", y = "Policy Stringency and\nMobility Trends (%)") +
   theme_minimal() +
   theme(legend.position = "bottom",
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
-        axis.text = element_text(size = 15),
-        axis.title = element_text(size = 15),
-        legend.text = element_text(size = 15),
-        strip.text = element_text(size = 15,
-                                  face = "bold")) +
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 25),
+        legend.text = element_text(size = 25),
+        strip.text = element_text(size = 25,
+                                  face = "bold"),
+        panel.spacing.x = unit(10, "mm")) +
   facet_grid(.~country_region, scales = "free_x", space = "free_x")
 
-plot_grid(cu,lr,mob,ncol=1, rel_heights = c(1,1,1.2), align = "v", axis = "b", labels = "AUTO")
+plot_grid(cu,lr,mob,ncol=1, rel_heights = c(1,1,1.2), align = "v", axis = "b", labels = "AUTO", label_size = 30)
 
-ggsave(paste0(covidFigPath, "figure1.jpg"), height = 15, width = 25)
-ggsave(paste0(covidFigPath, "figure1.pdf"), height = 15, width = 25)
+ggsave(paste0(covidFigPath, "figure1.jpg"), height = 15, width = 30)
+ggsave(paste0(covidFigPath, "figure1.pdf"), height = 15, width = 30)
 ```
 
 
@@ -394,7 +404,6 @@ ggsave(paste0(covidFigPath, "figure1.pdf"), height = 15, width = 25)
 #  as.character(smoothed[which(!smoothed$country_region %in% case_countries & !is.na(smoothed$end_label)),]$iso_code)
 
 test_avail <- dc %>% filter(tests > 0) %>% dplyr::select(country_region)
-
 
 
 spp<-
@@ -434,11 +443,11 @@ spp<-
                       label = end_label),
                   color = "black",
                   alpha = 0.3,
-                  size = 3.5,
+                  size = 5,
                   box.padding = 0.8,
                   hjust = 1,
                   force = 0.1,
-                  segment.alpha = 0.3,
+                  segment.alpha = 0,
                   fontface = "bold",
                   seed = 1234) +
   geom_label_repel(data = smoothed %>%
@@ -451,18 +460,18 @@ spp<-
                       label = end_label),
                   color = "black",
                   fill = NA,
-                  size = 3.5,
+                  size = 5,
                   box.padding = 0.8,
                   hjust = 1,
                   force = 0.1,
-                  segment.alpha = 0.3,
+                  segment.alpha = 0,
                   fontface = "bold",
                   seed = 1234) +
   scale_x_continuous(breaks=seq(0,20,4)) +
   scale_y_continuous(trans = reverselog_trans(2), 
-                     breaks = c(2,4, 7,14,28, 56, 112, 224,365),
-                     labels = c("2 days", "4 days", "1 week", "2 weeks", "1 month", "2 months", "4 months", "8 months","1 year"),
-                     limits = c(max(covid$doubling_time),1)) +
+                     breaks = c(1,2, 7,14,30, 60, 120, 365, 730),
+                     labels = c("1 day", "2 days", "1 week", "2 weeks", "1 month", "2 months", "4 months", "1 year", "2 years"),
+                     limits = c(max_dt,1)) +
   scale_color_identity() +
   guides(size = F, alpha = F) +
   labs(x = paste0("Weeks since ",case_limit,"th reported case"),
@@ -471,8 +480,8 @@ spp<-
   theme(panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
-        axis.text = element_text(size = 15),
-        axis.title = element_text(size = 15))
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 25))
 
 
 dcc <-
@@ -485,25 +494,32 @@ ggplot(dc %>% filter(tests > 0),#%>% filter(country_region %in% hand_pick),
 labs(x = "Weeks of uncontrolled spread",
      y = "Total COVID-19 deaths\n(log2 scale)") +
   scale_size_area(max_size = 14, 
-                  breaks = c(10,20,40,80,100),
-                  name = "Total tests\nper thousand") +
+                  breaks = c(25,50,100,200),
+                  name = "Tests\nper thousand") +
   scale_y_continuous(trans = "log2",
                      labels = scales::comma_format(accuracy = 1), 
                      breaks = 2^seq(-4, 15, 1) * 100) +
   scale_x_continuous(breaks=seq(0,8)) +
-  geom_text_repel(aes(fontface = ff),
+  geom_text_repel(data = dc %>% filter(tests > 0, 
+                                       country_region %in% case_countries),
+                  aes(fontface = ff),
+                  size = 5, segment.size = 0) +
+  geom_text_repel(data = dc %>% filter(tests > 0, 
+                                       !country_region %in% case_countries),
+                  aes(fontface = ff),
                   size = 3) +
   theme_minimal() +
   theme(#legend.position = "bottom",
         panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
-        axis.text = element_text(size = 15),
-        axis.title = element_text(size = 15),
-        legend.text = element_text(size = 15))
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 25),
+        legend.title = element_text(size = 20),
+        legend.text = element_text(size = 20))
 
 
-plot_grid(spp, dcc, nrow = 1, align = "h", axis = "l", rel_widths = c(1,1.3), labels = "AUTO")
+plot_grid(spp, dcc, nrow = 1, align = "h", axis = "l", rel_widths = c(1,1.3), labels = "AUTO", label_size = 30)
 
 ggsave(paste0(covidFigPath, paste0("time_since",case_limit,".jpg")), height = 10, width = 22)
 
@@ -558,8 +574,8 @@ ggplot(subset %>%
         panel.grid.major.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
-        axis.text = element_text(size = 15),
-        axis.title = element_text(size = 15))
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 25))
 
 plot_grid(pr, spp, dcc, nrow = 1, align = "h", axis = "l", rel_widths = c(1,1,1.3))
 
@@ -594,9 +610,9 @@ cu_w <-
   theme(panel.grid.major.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
-        axis.text.y = element_text(size = 15),
-        axis.text.x = element_text(size = 15),
-        axis.title = element_text(size = 15))
+        axis.text.y = element_text(size = 25),
+        axis.text.x = element_text(size = 25),
+        axis.title = element_text(size = 25))
 
 pr_w <-
   ggplot(subset %>%
@@ -627,8 +643,8 @@ pr_w <-
         panel.grid.major.x = element_blank(),
         panel.grid.minor.y = element_blank(),
         panel.border = element_rect(color = "black", fill = "NA"),
-        axis.text = element_text(size = 15),
-        axis.title = element_text(size = 15))
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 25))
 
 
 plot_grid(cu_w, pr_w, ncol =1, align = "v", axis = "b")
