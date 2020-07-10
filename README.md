@@ -4,6 +4,10 @@ In this github repository we provide the methods, data and R scripts necessary t
 
 ![Doubling_rate](https://github.com/LukeAndersonTrocme/covid19-doubling-rates/blob/master/figures/figure1.jpg?raw=true)
 
+# TL;DR
+
+To reproduce this figure, clone this repository and run the covid_double_time.Rmd R script.
+
 # Methods 
 
 We focus on eight countries (New Zealand, Singapore, South Korea, Japan, Canada, Brazil, Italy and the United States) to provide some global context to the results. These countries were selected to provide examples of the upper and lower bounds of the range of responses and testing strategies. 
