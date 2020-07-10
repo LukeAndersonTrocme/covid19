@@ -27,7 +27,7 @@ We would like to thank SG, SS, SRC, CF and IK for their discussions and comments
 
 ## References
 
-Hale, Thomas, S. W. A. P.-T. P. and Kira, B. (2020) Oxford covid-19 government response tracker. URL: https://www.bsg.ox.ac.uk/research/research- projects/coronavirus-government-response-tracker. 
+Hale, Thomas, S. W. A. P.-T. P. and Kira, B. (2020) Oxford covid-19 government response tracker. URL: https://www.bsg.ox.ac.uk/research/research-projects/coronavirus-government-response-tracker. 
 
 Max Roser, Hannah Ritchie, E. O.-O. and Hasell, J. (2020) Coronavirus pandemic (covid-19). Our World in Data. URL: https://ourworldindata.org/coronavirus. 
 
