@@ -20,6 +20,17 @@ To measure how the number of new reported cases changes over time we use a const
 
 ![double_rate_methods](https://github.com/LukeAndersonTrocme/covid19-doubling-rates/blob/master/figures/dt_methods.png?raw=true)
 
+## Acknowledgements 
+
+We would like to thank SG, SS, SRC, CF and IK for their discussions and comments on early drafts of this article. 
+
+
+## References
+
+Hale, Thomas, S. W. A. P.-T. P. and Kira, B. (2020) Oxford covid-19 government response tracker. URL: https://www.bsg.ox.ac.uk/research/research- projects/coronavirus-government-response-tracker. 
+
+Max Roser, Hannah Ritchie, E. O.-O. and Hasell, J. (2020) Coronavirus pandemic (covid-19). Our World in Data. URL: https://ourworldindata.org/coronavirus. 
+
 
 # Canadian Data Viz 
 
