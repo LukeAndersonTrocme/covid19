@@ -33,8 +33,9 @@ Hale, Thomas, S. W. A. P.-T. P. and Kira, B. (2020) Oxford covid-19 government r
 
 Max Roser, Hannah Ritchie, E. O.-O. and Hasell, J. (2020) Coronavirus pandemic (covid-19). Our World in Data. URL: https://ourworldindata.org/coronavirus. 
 
+# Other COVID-19 Projects 
 
-# Canadian Data Viz 
+## Canadian Coronavirus Data Visualizations
 
 ![Covid19 in Canada](https://github.com/LukeAndersonTrocme/covid19-doubling-rates/blob/master/figures/Ontario_Covid_April-22-2020_summary.jpg?raw=true)
 
